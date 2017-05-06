@@ -168,8 +168,8 @@ Returns the URI of the vCenter that hosts the virtual machine.
 		[Parameter(Mandatory=$True)] [PSObject[]] $CIObject
 	)
 	# Setup Web Request for the API call to retireve the vCenter for the VM
-	$objVMView = $vm | Get-CIView
-	[xml]$vCenterServerXML = Get-vCloudAPIResponse -URI $objVMView.VCloudExtension.Any.VmVimObjectRef.VimServerRef.href -SessionKey $objVMView.Client.SessionKey -ContentType "application/vnd.vmware.admin.vmwvirtualcenter+xml"	
+	$objVMView = $CIObject | Get-CIView
+	[xml]$vCenterServerXML = Get-vCloudAPIResponse -URI $objVMView.VCloudExtension.Any.VmVimObjectRef.VimServerRef.href -SessionKey $objVMView.Client.SessionKey -ContentType "application/vnd.vmware.admin.vmwvirtualcenter+xml"
 	
 	# Return the vCenter URI
 	$vCenterServerXML.VimServer.Url
