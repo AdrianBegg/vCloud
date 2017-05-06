@@ -23,7 +23,7 @@
 ##########################################################################################
 
 [string] $vcd = "vcd.pigeonnuggets.com"
-[bool] $queryOnly = $false # If set to false the script will go through and attempt to correct the issues
+[bool] $queryOnly = $true  # If set to false the script will go through and attempt to correct the issues
 [string] $VirtualMachine = "*" # The VirtualMachine name to query/correct (use * for all VMs)
 
 Import-Module ".\Module-vCloudVM.psm1"
