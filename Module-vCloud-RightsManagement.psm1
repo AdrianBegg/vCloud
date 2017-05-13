@@ -394,6 +394,7 @@ function Remove-CIOrgRight(){
 	  #Requires -Version 2.0
 	#>
 
+	## To be written over the next week :) I am off to the football today
 }
 
 function Add-CIOrgRight(){
@@ -421,6 +422,8 @@ function Add-CIOrgRight(){
 	  LASTEDIT: 2017-05-11 
 	  #Requires -Version 2.0
 	#>
+	
+	## To be written over the next week :) I am off to the football today
 
 } 	  
 #endregion
