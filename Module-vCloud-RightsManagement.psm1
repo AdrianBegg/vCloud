@@ -1,6 +1,6 @@
 ##########################################################################################
 # Name: Module-vCloud-RightsManagement.psm1
-# Date: 11/05/2017 (v0.1)
+# Date: 13/05/2017 (v0.3)
 # Author: Adrian Begg (adrian.begg@ehloworld.com.au)
 # 
 # Purpose: PowerShell modules to extend the PowerCLI for vCloud to expose
@@ -10,7 +10,9 @@
 # Ref: http://pubs.vmware.com/vcd-820/topic/com.vmware.ICbase/PDF/vcloud_sp_api_guide_27_0.pdf 
 ##########################################################################################
 # Change Log
-# v0.1 - 11/05/2017 - Created module and tested on vCloud Director 8.20 and NSX 6.3
+# v0.1 - 6/05/2017 - Created module and tested on vCloud Director 8.20 and NSX 6.3
+# v0.2 - 13/05/2017 - Added cmdlets for Adding and Removing single rights and amended API call behaviour
+# v0.3 - 23/05/2017 - Rewriting the REST API base functions to leverage the existing $global:DefaultCIServers variable for connections rather then generating a session everytime and some error checking
 ##########################################################################################
 
 #region: API_Support_Functions
@@ -25,32 +27,31 @@ function Get-vCloudAPIResponse(){
 	.PARAMETER URI
 	The URI of the vCloud API object to perform the GET request against
 
-	.PARAMETER SessionKey
-	The SessionKey to use for authentication
-
 	.PARAMETER ContentType
 	The Content-Type to pass to vCloud in the headers
 
 	.EXAMPLE
-	Get-vCloudAPIResponse -URI "https://vcd.pigeonnuggets.com/api/vApp/vm-f13ad1ca-3151-455c-aa84-935a2669da96/virtualHardwareSection/disks" -SessionKey "850a11b158434697a750f31d50c857d4" -ContentType "application/vnd.vmware.vcloud.rasditemslist+xml"
+	Get-vCloudAPIResponse -URI "https://vcd.pigeonnuggets.com/api/vApp/vm-f13ad1ca-3151-455c-aa84-935a2669da96/virtualHardwareSection/disks" -ContentType "application/vnd.vmware.vcloud.rasditemslist+xml"
 
-	Returns the XML response from a HTTP GET to the API /virtualHardwareSection/disks section for object vm-f13ad1ca-3151-455c-aa84-935a2669da96 using the Session Key 850a11b158434697a750f31d50c857d4 and sets the content type to application/vnd.vmware.vcloud.rasditemslist+xml
+	Returns the XML response from a HTTP GET to the API /virtualHardwareSection/disks section for object vm-f13ad1ca-3151-455c-aa84-935a2669da96 using the Session Key from the current connection and sets the content type to application/vnd.vmware.vcloud.rasditemslist+xml
 
 	.NOTES
 	  NAME: Get-vCloudAPIResponse
 	  AUTHOR: Adrian Begg
-	  LASTEDIT: 2017-05-05
+	  LASTEDIT: 2017-05-24
 	  KEYWORDS: vmware get vcloud director 
 	  #Requires -Version 2.0
 	#>
 	Param(
 		[Parameter(Mandatory=$True)] [string] $URI,
-		[Parameter(Mandatory=$True)] [string] $SessionKey,
 		[Parameter(Mandatory=$True)] [string] $ContentType
-	)	
+	)
+	if(!$global:DefaultCIServers.IsConnected){
+		throw "You are not currently connected to any servers. Please connect first using a Connect-CIServer cmdlet."
+	}
 	# Setup Web Request for the API call to retireve the data from vCloud
 	$webclient = New-Object system.net.webclient
-	$webclient.Headers.Add("x-vcloud-authorization",$SessionKey)
+	$webclient.Headers.Add("x-vcloud-authorization",$global:DefaultCIServers.SessionSecret)
 	$webclient.Headers.Add("Accept","application/*+xml;version=27.0")
 	$webclient.Headers.Add("Content-Type", $ContentType)
 	$webclient.Headers.Add("Accept-Language: en")
@@ -73,9 +74,6 @@ function Publish-vCloudAPICall(){
 	.PARAMETER URI
 	The URI of the vCloud API object to perform the POST request against
 
-	.PARAMETER SessionKey
-	The SessionKey to use for authentication
-
 	.PARAMETER ContentType
 	The Content-Type to pass to vCloud in the headers
 	
@@ -87,19 +85,21 @@ function Publish-vCloudAPICall(){
 	.NOTES
 	  NAME: Publish-vCloudAPICall
 	  AUTHOR: Adrian Begg
-	  LASTEDIT: 2017-05-11
+	  LASTEDIT: 2017-05-24
 	  KEYWORDS: vmware publish vcloud director 
 	  #Requires -Version 2.0
 	#>
 	Param(
 		[Parameter(Mandatory=$True)] [string] $URI,
-		[Parameter(Mandatory=$True)] [string] $SessionKey,
 		[Parameter(Mandatory=$True)] [string] $ContentType,
 		[Parameter(Mandatory=$True)] [xml] $Data
 	)
+	if(!$global:DefaultCIServers.IsConnected){
+		throw "You are not currently connected to any servers. Please connect first using a Connect-CIServer cmdlet."
+	}
 	# Setup Web Request
 	$webclient = New-Object system.net.webclient
-	$webclient.Headers.Add("x-vcloud-authorization",$SessionKey)
+	$webclient.Headers.Add("x-vcloud-authorization",$global:DefaultCIServers.SessionSecret)
 	$webclient.Headers.Add("Accept","application/*+xml;version=27.0")
 	$webclient.Headers.Add("Content-Type", $ContentType)
 	$webclient.Headers.Add("Accept-Language: en")
@@ -129,26 +129,37 @@ function Get-CIOrgRightsXML(){
 	The Name of the vCloud Organisation
 
 	.EXAMPLE
-	Get-CIOrgRights -OrgName "PigeonNuggets"
+	Get-CIOrgRightsXML -OrgName "PigeonNuggets"
 
 	Returns XML rights for the Org "PigeonNuggets"
 
 	.NOTES
 	  NAME: Get-CIOrgRightsXML
 	  AUTHOR: Adrian Begg
-	  LASTEDIT: 2017-05-11
+	  LASTEDIT: 2017-05-24
 	  KEYWORDS: vmware get vcloud director 
 	  #Requires -Version 2.0
 	#>
 	Param(
 		[Parameter(Mandatory=$True)] [string] $OrgName
 	)
+	# Check if the server is connected
+	if(!$global:DefaultCIServers.IsConnected){
+		throw "You are not currently connected to any servers. Please connect first using a Connect-CIServer cmdlet."
+	}
+	# Check the version of vCloud Director is above v8.20
+	if(!($global:DefaultCIServers.Version -gt 8.20)){
+		throw "Org Rights are introdcued in vCloud Director 8.20. The current connected server is version $($global:DefaultCIServers.Version)"
+	}
 	# Retireve the Org object for the Organisation
 	$Org = Search-Cloud -QueryType Organization -Filter "Name==$($OrgName)" | Get-CIView
-	
+	if($Org -eq $null){
+		throw "Unable to find an Organisation $OrgName"
+		Break
+	}
 	# Make the API call to get the Rights assigned
 	[string] $URI = ($Org.Href + "/rights")
-	[xml]$xmlOrgRights = Get-vCloudAPIResponse -URI $URI -SessionKey $Org.Client.SessionKey -ContentType "application/vnd.vmware.admin.org.rights+xml;version=27.0"	
+	[xml]$xmlOrgRights = Get-vCloudAPIResponse -URI $URI -ContentType "application/vnd.vmware.admin.org.rights+xml;version=27.0"	
 
 	# Return a the XML
 	$xmlOrgRights
@@ -178,7 +189,7 @@ function Add-CIOrgRightXML(){
 	.NOTES
 	  NAME: Add-vCloudOrgRightXML
 	  AUTHOR: Adrian Begg
-	  LASTEDIT: 2017-05-11
+	  LASTEDIT: 2017-05-13
 	  KEYWORDS: vmware get vcloud director 
 	  #Requires -Version 2.0
 	#>
@@ -188,7 +199,6 @@ function Add-CIOrgRightXML(){
 		[Parameter(Mandatory=$True)] [string] $Name
 	)
 	# First check if the right already exists
-	
 	if ($RightReference -in $RightsXML.OrgRights.RightReference.Href){
 		Write-Warning "The right $($Name) is already assigned for this orgnaisation; no changes will be made."
 		$RightsXML
@@ -223,14 +233,20 @@ function Get-CIRights(){
 	.NOTES
 	  NAME: Get-CIOrgRights
 	  AUTHOR: Adrian Begg
-	  LASTEDIT: 2017-05-11
+	  LASTEDIT: 2017-05-24
 	  KEYWORDS: vmware get vcloud director 
 	  #Requires -Version 2.0
 	#>
+	# Check if the server is connected
+	if(!$global:DefaultCIServers.IsConnected){
+		throw "You are not currently connected to any servers. Please connect first using a Connect-CIServer cmdlet."
+	}
+	# Check the version of vCloud Director is above v8.20
+	if(!($global:DefaultCIServers.Version -gt 8.20)){
+		throw "Org Rights are introdcued in vCloud Director 8.20. The current connected server is version $($global:DefaultCIServers.Version)"
+	}
 	[string] $vCloudURI = $global:DefaultCIServers.ServiceUri.AbsoluteURI + "admin"
-	# Get a CIView for making the call; lazy coding should be fixed later quick handler for the session key
-	$SessionObj = (Get-CIUser)[0] | Get-CIView
-	(Get-vCloudAPIResponse -URI $vCloudURI -SessionKey $SessionObj.Client.SessionKey -ContentType "application/vnd.vmware.admin.vcloud+xml;version=27.0").VCloud.RightReferences.RightReference
+	(Get-vCloudAPIResponse -URI $vCloudURI -ContentType "application/vnd.vmware.admin.vcloud+xml;version=27.0").VCloud.RightReferences.RightReference
 }
 
 function Get-CIOrgRights(){
@@ -243,7 +259,7 @@ function Get-CIOrgRights(){
 	The collection returned will include all rights available with a property "Enabled"; if they are available to the Org this property will be true
 
 	.PARAMETER OrgName
-	The Name of the vCloud Organisation
+	The Name of the vCloud Organisation.
 
 	.EXAMPLE
 	Get-CIOrgRights -OrgName "PigeonNuggets"
@@ -253,16 +269,24 @@ function Get-CIOrgRights(){
 	.NOTES
 	  NAME: Get-CIOrgRights
 	  AUTHOR: Adrian Begg
-	  LASTEDIT: 2017-05-11
+	  LASTEDIT: 2017-05-13
 	  KEYWORDS: vmware get vcloud director 
 	  #Requires -Version 2.0
 	#>
 	Param(
 		[Parameter(Mandatory=$True)] [string] $OrgName
 	)
+	# Check if the server is connected
+	if(!$global:DefaultCIServers.IsConnected){
+		throw "You are not currently connected to any servers. Please connect first using a Connect-CIServer cmdlet."
+	}
 	# Make the API call to get the Rights assigned
-	[xml]$xmlOrgRights = Get-CIOrgRightsXML $OrgName
-
+	try{
+		[xml]$xmlOrgRights = Get-CIOrgRightsXML $OrgName
+	} catch {
+		throw "Unable to get the Organisation Rights for $OrgName"
+		Break
+	}
 	# Next we need to make a call to the API to resolve the Rights that are avaialble for the Cloud
 	$cloudRights = Get-CIRights
 	
@@ -288,7 +312,7 @@ function Export-CIOrgRights(){
 	Outputs the rights assigned to an Org to a CSV file for all vCloud Rights assigned to the Org. This can then be manipulated and imported back into vCloud with new rights assignemtns using the Import-vCloudOrgRights cmdlet
 
 	.PARAMETER OrgName
-	The Name of the vCloud Organisation
+	The Name of the vCloud Organisation.
 	
 	.PARAMETER OutputFilePath
 	A fully qualified path to for the file to output the generated CSV
@@ -301,13 +325,26 @@ function Export-CIOrgRights(){
 	.NOTES
 	  NAME: Export-CIOrgRights
 	  AUTHOR: Adrian Begg
-	  LASTEDIT: 2017-05-11 
+	  LASTEDIT: 2017-05-24
 	  #Requires -Version 2.0
 	#>
 	Param(
 		[Parameter(Mandatory=$True)] [string] $OrgName,
 		[Parameter(Mandatory=$True)] [string] $OutputFilePath
 	)
+	# Check if the server is connected
+	if(!$global:DefaultCIServers.IsConnected){
+		throw "You are not currently connected to any servers. Please connect first using a Connect-CIServer cmdlet."
+	}
+	# Check the version of vCloud Director is above v8.20
+	if(!($global:DefaultCIServers.Version -gt 8.20)){
+		throw "Org Rights are introdcued in vCloud Director 8.20. The current connected server is version $($global:DefaultCIServers.Version)"
+	}
+	# Check the Org Exists
+	if((Search-Cloud -QueryType Organization -Filter "Name==$($OrgName)" | Get-CIView) -eq $null){
+		throw "Unable to find an Organisation $OrgName"
+		Break
+	}
 	$colRights = Get-CIOrgRights -OrgName $OrgName | Select name,enabled | Export-CSV $OutputFilePath -NoTypeInformation
 }
 
@@ -320,7 +357,7 @@ function Import-CIOrgRights(){
 	Will replace the Org rights enabled on a vCloud Organisation with those from a CSV containing the roles in the format name,enabled (role name, true/false)
 
 	.PARAMETER OrgName
-	The Name of the vCloud Organisation
+	The Name of the vCloud Organisation.
 	
 	.PARAMETER InputCSVFile
 	A fully qualified path to for the input CSV file which will be applied to the Organisation
@@ -333,19 +370,36 @@ function Import-CIOrgRights(){
 	.NOTES
 	  NAME: Import-CIOrgRights
 	  AUTHOR: Adrian Begg
-	  LASTEDIT: 2017-05-11 
+	  LASTEDIT: 2017-05-24
 	  #Requires -Version 2.0
 	#>
 	Param(
 		[Parameter(Mandatory=$True)] [string] $OrgName,
 		[Parameter(Mandatory=$True)] [string] $InputCSVFile
 	)
+	# Check if the server is connected
+	if(!$global:DefaultCIServers.IsConnected){
+		throw "You are not currently connected to any servers. Please connect first using a Connect-CIServer cmdlet."
+	}
+	# Check the version of vCloud Director is above v8.20
+	if(!($global:DefaultCIServers.Version -gt 8.20)){
+		throw "Org Rights are introdcued in vCloud Director 8.20. The current connected server is version $($global:DefaultCIServers.Version)"
+	}
+	# Check if the CSV provided exists
+	if(!(Test-Path $InputCSVFile)){
+		throw "The file $InputCSVFile does not exist. Please check the path and try again."
+		Break
+	}
+	# Check if the target Organisation exists
+	if((Search-Cloud -QueryType Organization -Filter "Name==$($OrgName)" | Get-CIView) -eq $null){
+		throw "Unable to find an Organisation $OrgName"
+		Break
+	}
 	# Import the rules from the CSV and get a list of valid rights for the Org
 	$colRightsCSV = Import-CSV -Path $InputCSVFile
 	[xml] $xmlOrgRights = Get-CIOrgRightsXML $OrgName
 	$colOrgRights = Get-CIOrgRights $OrgName
 	$colEnabledRights = $colRightsCSV | ?{$_.enabled.ToLower() -eq "true"}
-	
 	
 	# First clean the existing configuration of all OrgRights
 	[xml]$xmlRightsDoc = New-Object system.Xml.XmlDocument
@@ -361,11 +415,14 @@ function Import-CIOrgRights(){
 		$xmlRightsDoc = Add-CIOrgRightXML -RightsXML $xmlRightsDoc -RightReference $appliedRight.href -Name $appliedRight.Name
 	}
 	
-	# Make the API call to PSOT the Rights assigned
-	# TO DO: Add confiramtion and error checking
-	$Org = Search-Cloud -QueryType Organization -Filter "Name==$($OrgName)" | Get-CIView
-	[string] $URI = ($Org.Href + "/rights")
-	Publish-vCloudAPICall -URI $URI -SessionKey $Org.Client.SessionKey -ContentType "application/vnd.vmware.admin.org.rights+xml;version=27.0"	-Data $xmlRightsDoc
+	# Make the API call to POST the Rights assigned
+	try{
+		$Org = Search-Cloud -QueryType Organization -Filter "Name==$($OrgName)" | Get-CIView
+		[string] $URI = ($Org.Href + "/rights")
+		Publish-vCloudAPICall -URI $URI -ContentType "application/vnd.vmware.admin.org.rights+xml;version=27.0"	-Data $xmlRightsDoc
+	} catch {
+		throw "An error occured applying the imported rights to the Org $OrgName."
+	}
 }
 
 function Remove-CIOrgRight(){
@@ -377,7 +434,7 @@ function Remove-CIOrgRight(){
 	Removes a single vCloud Director right from an Organisation
 
 	.PARAMETER OrgName
-	The Name of the vCloud Organisation
+	The Name of the vCloud Organisation.
 	
 	.PARAMETER Right
 	The name of the vCloud Director right to remove from the Organisation
@@ -390,11 +447,45 @@ function Remove-CIOrgRight(){
 	.NOTES
 	  NAME: Remove-CIOrgRight
 	  AUTHOR: Adrian Begg
-	  LASTEDIT: 2017-05-11 
+	  LASTEDIT: 2017-05-24
 	  #Requires -Version 2.0
 	#>
-
-	## To be written over the next week :) I am off to the football today
+	Param(
+		[Parameter(Mandatory=$True)] [string] $OrgName,
+		[Parameter(Mandatory=$True)] [string] $Right
+	)
+	# Check if the server is connected
+	if(!$global:DefaultCIServers.IsConnected){
+		throw "You are not currently connected to any servers. Please connect first using a Connect-CIServer cmdlet."
+	}
+	# Check the version of vCloud Director is above v8.20
+	if(!($global:DefaultCIServers.Version -gt 8.20)){
+		throw "Org Rights are introdcued in vCloud Director 8.20. The current connected server is version $($global:DefaultCIServers.Version)"
+	}
+	# Check if the OrgRight is currently enabled for the Org
+	$colOrgRights = (Get-CIOrgRights $OrgName) | ?{$_.enabled -eq $true}
+	if (($colOrgRights | ?{$_.name -in $Right}) -eq $null){
+		Write-Warning "The Org Right $Right is not currently enabled on Org $OrgName no changes have been made."
+	} else {
+		# Get the current rights and remove the right from the configuration
+		[xml]$xmlOrgRights = Get-CIOrgRightsXML $OrgName
+		[xml]$xmlRightsDoc = New-Object system.Xml.XmlDocument
+		$xmlRightsDoc.LoadXml($xmlOrgRights.OuterXml)
+		# Now iterate through and find the Org Right
+		foreach($OrgRight in $xmlRightsDoc.OrgRights.RightReference){
+			if($OrgRight.Name -eq $Right){
+				$xmlRightsDoc.OrgRights.RemoveChild($OrgRight) > $nul
+			}
+		}
+		# Make the API call to POST the Rights assigned
+		try{
+			$Org = Search-Cloud -QueryType Organization -Filter "Name==$($OrgName)" | Get-CIView
+			[string] $URI = ($Org.Href + "/rights")
+			Publish-vCloudAPICall -URI $URI -ContentType "application/vnd.vmware.admin.org.rights+xml;version=27.0"	-Data $xmlRightsDoc
+		} catch {
+			throw "An error occured removing the right $Right from Org $OrgName."
+		}
+	}
 }
 
 function Add-CIOrgRight(){
@@ -406,7 +497,7 @@ function Add-CIOrgRight(){
 	Adds the provided vCloud Director right to the specfied Organisation 
 
 	.PARAMETER OrgName
-	The Name of the vCloud Organisation
+	The Name of the vCloud Organisation.
 	
 	.PARAMETER Right
 	The name of the vCloud Director right to assign
@@ -419,11 +510,45 @@ function Add-CIOrgRight(){
 	.NOTES
 	  NAME: Add-CIOrgRight
 	  AUTHOR: Adrian Begg
-	  LASTEDIT: 2017-05-11 
+	  LASTEDIT: 2017-05-24 
 	  #Requires -Version 2.0
 	#>
+	Param(
+		[Parameter(Mandatory=$True)] [string] $OrgName,
+		[Parameter(Mandatory=$True)] [string] $Right
+	)
+	# Check if the server is connected
+	if(!$global:DefaultCIServers.IsConnected){
+		throw "You are not currently connected to any servers. Please connect first using a Connect-CIServer cmdlet."
+	}
+	# Check the version of vCloud Director is above v8.20
+	if(!($global:DefaultCIServers.Version -gt 8.20)){
+		throw "Org Rights are introdcued in vCloud Director 8.20. The current connected server is version $($global:DefaultCIServers.Version)"
+	}
+	# Check if the OrgRight is currently enabled for the Org
+	$colOrgRights = (Get-CIOrgRights $OrgName) | ?{$_.enabled -eq $true}
+	if (!(($colOrgRights | ?{$_.name -in $Right}) -eq $null)){
+		Write-Warning "The Org Right $Right already exists for Org $OrgName no changes have been made."
+	} else {
+		# Get the current rights and add the new right to the configuration
+		[xml]$xmlOrgRights = Get-CIOrgRightsXML $OrgName
+		# Match the Rights Reference from the Global Rights list
+		$cloudRights = Get-CIRights
+		$newOrgRight = $cloudRights | ?{$_.name -in $Right}
+		if($newOrgRight -ne $null){
+			$xmlNewRightsDoc = Add-CIOrgRightXML -RightsXML $xmlOrgRights -RightReference $newOrgRight.href -Name $Right
+		} else {
+			throw "Unable to find a right with the name $Right to add to the Organisation. Please verify the right name and try again."
+		}
 	
-	## To be written over the next week :) I am off to the football today
-
+		# Make the API call to POST the newly added Right
+		try{
+			$Org = Search-Cloud -QueryType Organization -Filter "Name==$($OrgName)" | Get-CIView
+			[string] $URI = ($Org.Href + "/rights")
+			Publish-vCloudAPICall -URI $URI -ContentType "application/vnd.vmware.admin.org.rights+xml;version=27.0"	-Data $xmlNewRightsDoc
+		} catch {
+			throw "An error occured adding the new right $Right to the Org $OrgName."
+		}
+	}
 } 	  
 #endregion
