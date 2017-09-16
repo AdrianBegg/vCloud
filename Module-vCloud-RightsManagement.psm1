@@ -1,21 +1,71 @@
 ##########################################################################################
 # Name: Module-vCloud-RightsManagement.psm1
-# Date: 13/05/2017 (v0.3)
+# Date: 16/09/2017 (v0.5)
 # Author: Adrian Begg (adrian.begg@ehloworld.com.au)
-# 
+#
 # Purpose: PowerShell modules to extend the PowerCLI for vCloud to expose
 # additional methods for management Organisation Rights which are currently not exposed
 # via the vCloud GUI/PowerCLI cmdlets
 #
-# Ref: http://pubs.vmware.com/vcd-820/topic/com.vmware.ICbase/PDF/vcloud_sp_api_guide_27_0.pdf 
+# Ref: http://pubs.vmware.com/vcd-820/topic/com.vmware.ICbase/PDF/vcloud_sp_api_guide_27_0.pdf
 ##########################################################################################
 # Change Log
 # v0.1 - 6/05/2017 - Created module and tested on vCloud Director 8.20 and NSX 6.3
 # v0.2 - 13/05/2017 - Added cmdlets for Adding and Removing single rights and amended API call behaviour
 # v0.3 - 23/05/2017 - Rewriting the REST API base functions to leverage the existing $global:DefaultCIServers variable for connections rather then generating a session everytime and some error checking
+# v0.4 - 12/07/2017 - Updating how the Org is obtained to use Get-Org to handle a ( and other reserverd char in a queries
+# v0.5 - 16/09/2017:
+# 	- Added cmdlets to expose hide/show OrgVDC for specific Org Users
+#	- Cleaned up some error checking
+#	- Updated cmdlet documentation
 ##########################################################################################
 
 #region: API_Support_Functions
+function Test-vCloudEnvironment(){
+	<#
+	.SYNOPSIS
+	Performs some basic checks against the currently connected vCloud Director environment to determine if the current version is
+	greater than the required version by a cmdlet and that there is a current connection active.
+
+	.DESCRIPTION
+	Performs some basic checks against the currently connected vCloud Director environment to determine if the current version is
+	greater than the required version by a cmdlet and that there is a current connection active.
+
+	Returns true if the test passes
+
+	.PARAMETER Version
+	The Minimum Version required by the cmdlet.
+
+	.EXAMPLE
+	Test-vCloudEnvironment -Version 8.20
+	Will return true if connected to a vCloud Server with a version greater then "8.20"
+
+	.EXAMPLE
+	Test-vCloudEnvironment
+	Will return true if connected to a vCloud Server (any version).
+	.NOTES
+	  NAME: Add-OrgVdcAccessRights
+	  AUTHOR: Adrian Begg
+	  LASTEDIT: 2017-09-16
+	  REFERENCE: http://pubs.vmware.com/vcd-820/topic/com.vmware.ICbase/PDF/vcloud_sp_api_guide_27_0.pdf p.197
+	#>
+	Param(
+		[Parameter(Mandatory=$False)]
+			[ValidateNotNullorEmpty()] [double] $Version
+	)
+	if(!$global:DefaultCIServers.IsConnected){
+		throw "You are not currently connected to any servers. Please connect first using a Connect-CIServer cmdlet."
+		$false
+		Break
+	} elseif((!([string]::IsNullOrEmpty($Version))) -and (!($global:DefaultCIServers.Version -gt $Version))){
+		throw "The executing cmdlet requires the vCloud Director environment to be greater then $Version. The version of the connected server is $($global:DefaultCIServers.Version)"
+		$false
+		Break
+	} else {
+		$true
+	}
+}
+
 function Get-vCloudAPIResponse(){
 	<#
 	.SYNOPSIS
@@ -38,16 +88,16 @@ function Get-vCloudAPIResponse(){
 	.NOTES
 	  NAME: Get-vCloudAPIResponse
 	  AUTHOR: Adrian Begg
-	  LASTEDIT: 2017-05-24
-	  KEYWORDS: vmware get vcloud director 
+	  LASTEDIT: 2017-09-16
+	  KEYWORDS: vmware get vcloud director
 	  #Requires -Version 2.0
 	#>
 	Param(
 		[Parameter(Mandatory=$True)] [string] $URI,
 		[Parameter(Mandatory=$True)] [string] $ContentType
 	)
-	if(!$global:DefaultCIServers.IsConnected){
-		throw "You are not currently connected to any servers. Please connect first using a Connect-CIServer cmdlet."
+	if(!(Test-vCloudEnvironment)){
+		Break
 	}
 	# Setup Web Request for the API call to retireve the data from vCloud
 	$webclient = New-Object system.net.webclient
@@ -59,7 +109,7 @@ function Get-vCloudAPIResponse(){
 		[xml]$xmlResponse = $webclient.DownloadString($URI)
 	} catch {
 		throw "An error occured attempting to make HTTP GET against $URI"
-	}		
+	}
 	$xmlResponse
 }
 
@@ -76,17 +126,17 @@ function Publish-vCloudAPICall(){
 
 	.PARAMETER ContentType
 	The Content-Type to pass to vCloud in the headers
-	
+
 	.PARAMETER Data
 	The payload to POST to the API
 
 	.EXAMPLE
-	
+
 	.NOTES
 	  NAME: Publish-vCloudAPICall
 	  AUTHOR: Adrian Begg
-	  LASTEDIT: 2017-05-24
-	  KEYWORDS: vmware publish vcloud director 
+	  LASTEDIT: 2017-09-16
+	  KEYWORDS: vmware publish vcloud director
 	  #Requires -Version 2.0
 	#>
 	Param(
@@ -94,8 +144,9 @@ function Publish-vCloudAPICall(){
 		[Parameter(Mandatory=$True)] [string] $ContentType,
 		[Parameter(Mandatory=$True)] [xml] $Data
 	)
-	if(!$global:DefaultCIServers.IsConnected){
-		throw "You are not currently connected to any servers. Please connect first using a Connect-CIServer cmdlet."
+	# Check if the server is connected
+	if(!(Test-vCloudEnvironment)){
+		Break
 	}
 	# Setup Web Request
 	$webclient = New-Object system.net.webclient
@@ -103,13 +154,41 @@ function Publish-vCloudAPICall(){
 	$webclient.Headers.Add("Accept","application/*+xml;version=27.0")
 	$webclient.Headers.Add("Content-Type", $ContentType)
 	$webclient.Headers.Add("Accept-Language: en")
-	
+
 	# Convert the new configuration to byte array for upload
 	[string] $strUploadData = $Data.OuterXml
 	[byte[]]$byteArray = [System.Text.Encoding]::ASCII.GetBytes($strUploadData)
 	# "To the cloud !"
 	try{
 		$UploadData = $webclient.UploadData($URI, "PUT", $bytearray)
+	} catch {
+		throw "An error occured attempting to make HTTP POST against $URI"
+	}
+}
+
+function Update-vCloudAPICall(){
+	Param(
+		[Parameter(Mandatory=$True)] [string] $URI,
+		[Parameter(Mandatory=$True)] [string] $ContentType,
+		[Parameter(Mandatory=$True)] [xml] $Data
+	)
+	# Check if the server is connected
+	if(!(Test-vCloudEnvironment)){
+		Break
+	}
+	# Setup Web Request
+	$webclient = New-Object system.net.webclient
+	$webclient.Headers.Add("x-vcloud-authorization",$global:DefaultCIServers.SessionSecret)
+	$webclient.Headers.Add("Accept","application/*+xml;version=27.0")
+	$webclient.Headers.Add("Content-Type", $ContentType)
+	$webclient.Headers.Add("Accept-Language: en")
+
+	# Convert the new configuration to byte array for upload
+	[string] $strUploadData = $Data.OuterXml
+	[byte[]]$byteArray = [System.Text.Encoding]::ASCII.GetBytes($strUploadData)
+	# "To the cloud !"
+	try{
+		$UploadData = $webclient.UploadData($URI, "POST", $bytearray)
 	} catch {
 		throw "An error occured attempting to make HTTP POST against $URI"
 	}
@@ -124,7 +203,7 @@ function Get-CIOrgRightsXML(){
 
 	.DESCRIPTION
 	Returns the Org rights in vCloud for a provided orgnaisation
-	
+
 	.PARAMETER OrgName
 	The Name of the vCloud Organisation
 
@@ -136,30 +215,27 @@ function Get-CIOrgRightsXML(){
 	.NOTES
 	  NAME: Get-CIOrgRightsXML
 	  AUTHOR: Adrian Begg
-	  LASTEDIT: 2017-05-24
-	  KEYWORDS: vmware get vcloud director 
+	  LASTEDIT: 2017-09-16
+	  KEYWORDS: vmware get vcloud director
 	  #Requires -Version 2.0
 	#>
 	Param(
 		[Parameter(Mandatory=$True)] [string] $OrgName
 	)
-	# Check if the server is connected
-	if(!$global:DefaultCIServers.IsConnected){
-		throw "You are not currently connected to any servers. Please connect first using a Connect-CIServer cmdlet."
-	}
-	# Check the version of vCloud Director is above v8.20
-	if(!($global:DefaultCIServers.Version -gt 8.20)){
-		throw "Org Rights are introdcued in vCloud Director 8.20. The current connected server is version $($global:DefaultCIServers.Version)"
+	# Check if the server is connected and version is greater then 8.20
+	if(!(Test-vCloudEnvironment -Version 8.20)){
+		Break
 	}
 	# Retireve the Org object for the Organisation
-	$Org = Search-Cloud -QueryType Organization -Filter "Name==$($OrgName)" | Get-CIView
-	if($Org -eq $null){
+	try{
+		$Org = Get-Org -Name $OrgName | Get-CIView
+	} catch {
 		throw "Unable to find an Organisation $OrgName"
 		Break
 	}
 	# Make the API call to get the Rights assigned
 	[string] $URI = ($Org.Href + "/rights")
-	[xml]$xmlOrgRights = Get-vCloudAPIResponse -URI $URI -ContentType "application/vnd.vmware.admin.org.rights+xml;version=27.0"	
+	[xml]$xmlOrgRights = Get-vCloudAPIResponse -URI $URI -ContentType "application/vnd.vmware.admin.org.rights+xml;version=27.0"
 
 	# Return a the XML
 	$xmlOrgRights
@@ -176,10 +252,10 @@ function Add-CIOrgRightXML(){
 
 	.PARAMETER RightsXML
 	The Rights for an Organisation in XML format
-	
+
 	.PARAMETER RightReference
 	The vCloud URI Reference for the new right
-	
+
 	.PARAMETER Name
 	The name of the Right
 
@@ -190,7 +266,7 @@ function Add-CIOrgRightXML(){
 	  NAME: Add-vCloudOrgRightXML
 	  AUTHOR: Adrian Begg
 	  LASTEDIT: 2017-05-13
-	  KEYWORDS: vmware get vcloud director 
+	  KEYWORDS: vmware get vcloud director
 	  #Requires -Version 2.0
 	#>
 	Param(
@@ -203,19 +279,19 @@ function Add-CIOrgRightXML(){
 		Write-Warning "The right $($Name) is already assigned for this orgnaisation; no changes will be made."
 		$RightsXML
 	} else {
-		
+
 		# Load the XML and add the new element into the RightReference section
 		[xml]$xmlRightsDoc = New-Object system.Xml.XmlDocument
 		$xmlRightsDoc.LoadXml($RightsXML.OuterXml)
-		
+
 		$newRoleRight = $xmlRightsDoc.CreateElement("RightReference")
 		$newRoleRight.SetAttribute("href",$RightReference)
 		$newRoleRight.SetAttribute("name",$Name)
 		$newRoleRight.SetAttribute("type","application/vnd.vmware.admin.right+xml")
 		$xmlRightsDoc.OrgRights.AppendChild($newRoleRight) > $nul
-		
+
 		# Get rid of the unwanted namespace element added by .NET and return to the caller
-		$xmlRightsDoc = [xml] $xmlRightsDoc.OuterXml.Replace(" xmlns=`"`"", "")	
+		$xmlRightsDoc = [xml] $xmlRightsDoc.OuterXml.Replace(" xmlns=`"`"", "")
 		$xmlRightsDoc
 	}
 }
@@ -233,17 +309,13 @@ function Get-CIRights(){
 	.NOTES
 	  NAME: Get-CIOrgRights
 	  AUTHOR: Adrian Begg
-	  LASTEDIT: 2017-05-24
-	  KEYWORDS: vmware get vcloud director 
+	  LASTEDIT: 2017-09-16
+	  KEYWORDS: vmware get vcloud director
 	  #Requires -Version 2.0
 	#>
-	# Check if the server is connected
-	if(!$global:DefaultCIServers.IsConnected){
-		throw "You are not currently connected to any servers. Please connect first using a Connect-CIServer cmdlet."
-	}
-	# Check the version of vCloud Director is above v8.20
-	if(!($global:DefaultCIServers.Version -gt 8.20)){
-		throw "Org Rights are introdcued in vCloud Director 8.20. The current connected server is version $($global:DefaultCIServers.Version)"
+	# Check if the server is connected and version is greater then 8.20
+	if(!(Test-vCloudEnvironment -Version 8.20)){
+		Break
 	}
 	[string] $vCloudURI = $global:DefaultCIServers.ServiceUri.AbsoluteURI + "admin"
 	(Get-vCloudAPIResponse -URI $vCloudURI -ContentType "application/vnd.vmware.admin.vcloud+xml;version=27.0").VCloud.RightReferences.RightReference
@@ -269,16 +341,16 @@ function Get-CIOrgRights(){
 	.NOTES
 	  NAME: Get-CIOrgRights
 	  AUTHOR: Adrian Begg
-	  LASTEDIT: 2017-05-13
-	  KEYWORDS: vmware get vcloud director 
+	  LASTEDIT: 2017-09-16
+	  KEYWORDS: vmware get vcloud director
 	  #Requires -Version 2.0
 	#>
 	Param(
 		[Parameter(Mandatory=$True)] [string] $OrgName
 	)
-	# Check if the server is connected
-	if(!$global:DefaultCIServers.IsConnected){
-		throw "You are not currently connected to any servers. Please connect first using a Connect-CIServer cmdlet."
+	# Check if the server is connected and version is greater then 8.20
+	if(!(Test-vCloudEnvironment -Version 8.20)){
+		Break
 	}
 	# Make the API call to get the Rights assigned
 	try{
@@ -289,14 +361,14 @@ function Get-CIOrgRights(){
 	}
 	# Next we need to make a call to the API to resolve the Rights that are avaialble for the Cloud
 	$cloudRights = Get-CIRights
-	
-	# Now build a collection of the rights available vs the rights enabled for the 
+
+	# Now build a collection of the rights available vs the rights enabled for the
 	$colRights = New-Object -TypeName System.Collections.ArrayList
 	foreach($objRight in $cloudRights){
 		$objRightAssignment = New-Object System.Management.Automation.PSObject
 		$objRightAssignment | Add-Member Note* RightReference $objRight.href
 		$objRightAssignment | Add-Member Note* Name $objRight.name
-		$objRightAssignment | Add-Member Note* Enabled ($objRight.href -in $xmlOrgRights.OrgRights.RightReference.Href)	
+		$objRightAssignment | Add-Member Note* Enabled ($objRight.href -in $xmlOrgRights.OrgRights.RightReference.Href)
 		$colRights.Add($objRightAssignment) > $null
 	}
 	# Return a collection of rights
@@ -313,7 +385,7 @@ function Export-CIOrgRights(){
 
 	.PARAMETER OrgName
 	The Name of the vCloud Organisation.
-	
+
 	.PARAMETER OutputFilePath
 	A fully qualified path to for the file to output the generated CSV
 
@@ -325,23 +397,21 @@ function Export-CIOrgRights(){
 	.NOTES
 	  NAME: Export-CIOrgRights
 	  AUTHOR: Adrian Begg
-	  LASTEDIT: 2017-05-24
+	  LASTEDIT: 2017-09-16
 	  #Requires -Version 2.0
 	#>
 	Param(
 		[Parameter(Mandatory=$True)] [string] $OrgName,
 		[Parameter(Mandatory=$True)] [string] $OutputFilePath
 	)
-	# Check if the server is connected
-	if(!$global:DefaultCIServers.IsConnected){
-		throw "You are not currently connected to any servers. Please connect first using a Connect-CIServer cmdlet."
-	}
-	# Check the version of vCloud Director is above v8.20
-	if(!($global:DefaultCIServers.Version -gt 8.20)){
-		throw "Org Rights are introdcued in vCloud Director 8.20. The current connected server is version $($global:DefaultCIServers.Version)"
+	# Check if the server is connected and version is greater then 8.20
+	if(!(Test-vCloudEnvironment -Version 8.20)){
+		Break
 	}
 	# Check the Org Exists
-	if((Search-Cloud -QueryType Organization -Filter "Name==$($OrgName)" | Get-CIView) -eq $null){
+	try{
+		$Org = Get-Org -Name $OrgName | Get-CIView
+	} catch {
 		throw "Unable to find an Organisation $OrgName"
 		Break
 	}
@@ -358,7 +428,7 @@ function Import-CIOrgRights(){
 
 	.PARAMETER OrgName
 	The Name of the vCloud Organisation.
-	
+
 	.PARAMETER InputCSVFile
 	A fully qualified path to for the input CSV file which will be applied to the Organisation
 
@@ -370,28 +440,25 @@ function Import-CIOrgRights(){
 	.NOTES
 	  NAME: Import-CIOrgRights
 	  AUTHOR: Adrian Begg
-	  LASTEDIT: 2017-05-24
+	  LASTEDIT: 2017-09-16
 	  #Requires -Version 2.0
 	#>
 	Param(
 		[Parameter(Mandatory=$True)] [string] $OrgName,
 		[Parameter(Mandatory=$True)] [string] $InputCSVFile
 	)
-	# Check if the server is connected
-	if(!$global:DefaultCIServers.IsConnected){
-		throw "You are not currently connected to any servers. Please connect first using a Connect-CIServer cmdlet."
-	}
-	# Check the version of vCloud Director is above v8.20
-	if(!($global:DefaultCIServers.Version -gt 8.20)){
-		throw "Org Rights are introdcued in vCloud Director 8.20. The current connected server is version $($global:DefaultCIServers.Version)"
+	# Check if the server is connected and version is greater then 8.20
+	if(!(Test-vCloudEnvironment -Version 8.20)){
+		Break
 	}
 	# Check if the CSV provided exists
 	if(!(Test-Path $InputCSVFile)){
 		throw "The file $InputCSVFile does not exist. Please check the path and try again."
 		Break
 	}
-	# Check if the target Organisation exists
-	if((Search-Cloud -QueryType Organization -Filter "Name==$($OrgName)" | Get-CIView) -eq $null){
+	try{
+		$Org = Get-Org -Name $OrgName | Get-CIView
+	} catch {
 		throw "Unable to find an Organisation $OrgName"
 		Break
 	}
@@ -400,7 +467,7 @@ function Import-CIOrgRights(){
 	[xml] $xmlOrgRights = Get-CIOrgRightsXML $OrgName
 	$colOrgRights = Get-CIOrgRights $OrgName
 	$colEnabledRights = $colRightsCSV | ?{$_.enabled.ToLower() -eq "true"}
-	
+
 	# First clean the existing configuration of all OrgRights
 	[xml]$xmlRightsDoc = New-Object system.Xml.XmlDocument
 	$xmlRightsDoc.LoadXml($xmlOrgRights.OuterXml)
@@ -414,10 +481,10 @@ function Import-CIOrgRights(){
 	foreach($appliedRight in $newOrgRights){
 		$xmlRightsDoc = Add-CIOrgRightXML -RightsXML $xmlRightsDoc -RightReference $appliedRight.href -Name $appliedRight.Name
 	}
-	
-	# Make the API call to POST the Rights assigned
+	# Retireve the Org object for the Organisation
 	try{
-		$Org = Search-Cloud -QueryType Organization -Filter "Name==$($OrgName)" | Get-CIView
+		$Org = Get-Org -Name $OrgName | Get-CIView
+		# Make the API call to POST the Rights assigned
 		[string] $URI = ($Org.Href + "/rights")
 		Publish-vCloudAPICall -URI $URI -ContentType "application/vnd.vmware.admin.org.rights+xml;version=27.0"	-Data $xmlRightsDoc
 	} catch {
@@ -435,7 +502,7 @@ function Remove-CIOrgRight(){
 
 	.PARAMETER OrgName
 	The Name of the vCloud Organisation.
-	
+
 	.PARAMETER Right
 	The name of the vCloud Director right to remove from the Organisation
 
@@ -454,13 +521,9 @@ function Remove-CIOrgRight(){
 		[Parameter(Mandatory=$True)] [string] $OrgName,
 		[Parameter(Mandatory=$True)] [string] $Right
 	)
-	# Check if the server is connected
-	if(!$global:DefaultCIServers.IsConnected){
-		throw "You are not currently connected to any servers. Please connect first using a Connect-CIServer cmdlet."
-	}
-	# Check the version of vCloud Director is above v8.20
-	if(!($global:DefaultCIServers.Version -gt 8.20)){
-		throw "Org Rights are introdcued in vCloud Director 8.20. The current connected server is version $($global:DefaultCIServers.Version)"
+	# Check if the server is connected and version is greater then 8.20
+	if(!(Test-vCloudEnvironment -Version 8.20)){
+		Break
 	}
 	# Check if the OrgRight is currently enabled for the Org
 	$colOrgRights = (Get-CIOrgRights $OrgName) | ?{$_.enabled -eq $true}
@@ -479,7 +542,8 @@ function Remove-CIOrgRight(){
 		}
 		# Make the API call to POST the Rights assigned
 		try{
-			$Org = Search-Cloud -QueryType Organization -Filter "Name==$($OrgName)" | Get-CIView
+			# Retireve the Org object for the Organisation
+			$Org = Get-Org -Name $OrgName | Get-CIView
 			[string] $URI = ($Org.Href + "/rights")
 			Publish-vCloudAPICall -URI $URI -ContentType "application/vnd.vmware.admin.org.rights+xml;version=27.0"	-Data $xmlRightsDoc
 		} catch {
@@ -494,11 +558,11 @@ function Add-CIOrgRight(){
 	Adds a single vCloud Director right to an Organisation
 
 	.DESCRIPTION
-	Adds the provided vCloud Director right to the specfied Organisation 
+	Adds the provided vCloud Director right to the specfied Organisation
 
 	.PARAMETER OrgName
 	The Name of the vCloud Organisation.
-	
+
 	.PARAMETER Right
 	The name of the vCloud Director right to assign
 
@@ -510,20 +574,16 @@ function Add-CIOrgRight(){
 	.NOTES
 	  NAME: Add-CIOrgRight
 	  AUTHOR: Adrian Begg
-	  LASTEDIT: 2017-05-24 
+	  LASTEDIT: 2017-05-24
 	  #Requires -Version 2.0
 	#>
 	Param(
 		[Parameter(Mandatory=$True)] [string] $OrgName,
 		[Parameter(Mandatory=$True)] [string] $Right
 	)
-	# Check if the server is connected
-	if(!$global:DefaultCIServers.IsConnected){
-		throw "You are not currently connected to any servers. Please connect first using a Connect-CIServer cmdlet."
-	}
-	# Check the version of vCloud Director is above v8.20
-	if(!($global:DefaultCIServers.Version -gt 8.20)){
-		throw "Org Rights are introdcued in vCloud Director 8.20. The current connected server is version $($global:DefaultCIServers.Version)"
+	# Check if the server is connected and version is greater then 8.20
+	if(!(Test-vCloudEnvironment -Version 8.20)){
+		Break
 	}
 	# Check if the OrgRight is currently enabled for the Org
 	$colOrgRights = (Get-CIOrgRights $OrgName) | ?{$_.enabled -eq $true}
@@ -540,15 +600,492 @@ function Add-CIOrgRight(){
 		} else {
 			throw "Unable to find a right with the name $Right to add to the Organisation. Please verify the right name and try again."
 		}
-	
+
 		# Make the API call to POST the newly added Right
 		try{
-			$Org = Search-Cloud -QueryType Organization -Filter "Name==$($OrgName)" | Get-CIView
+			$Org = Get-Org -Name $OrgName | Get-CIView
 			[string] $URI = ($Org.Href + "/rights")
 			Publish-vCloudAPICall -URI $URI -ContentType "application/vnd.vmware.admin.org.rights+xml;version=27.0"	-Data $xmlNewRightsDoc
 		} catch {
 			throw "An error occured adding the new right $Right to the Org $OrgName."
 		}
 	}
-} 	  
+}
+#endregion
+
+#region: Org VDC View Rights
+function Get-OrgVdcAccessRightsXML(){
+	<#
+	.SYNOPSIS
+	Support function which returns the Access Controls for a provided Organisation Virtual Datacenter object in XML from the vCloud API.
+
+	.DESCRIPTION
+	Returns the XML returned by an API call to vCloud for a OrgVDC with the Provided ID.
+
+	.PARAMETER OrgVDCId
+	The vCloud Object Id for the Org VDC to query
+
+	.EXAMPLE
+	Get-OrgVdcAccessRightsXML -OrgVDCId "urn:vcloud:vdc:0a91d569-7653-40ed-8258-c90f12ec05c8"
+
+	Returns the AccessControl details in XML format for the Org VDC with the Id urn:vcloud:vdc:0a91d569-7653-40ed-8258-c90f12ec05c8
+
+	.NOTES
+	  NAME: Get-OrgVdcAccessRightsXML
+	  AUTHOR: Adrian Begg
+	  LASTEDIT: 2017-09-13
+	  REFERENCE: http://pubs.vmware.com/vcd-820/topic/com.vmware.ICbase/PDF/vcloud_sp_api_guide_27_0.pdf p.197
+	#>
+	Param(
+		[Parameter(Mandatory=$True)]
+			[ValidateNotNullorEmpty()] [string] $OrgVDCId
+	)
+	# The controlAccess is not exposed in the AdminView of object (the deafult reutnred from Get-OrgVDC) need to get the User View Level
+	$objOrgVDCUserView = Get-CIView -Id $OrgVDCId -ViewLevel User
+	[string] $OrgVDCURI = $objOrgVDCUserView.Href
+	[xml]$XMLOrgVDCResponse = (Get-vCloudAPIResponse -URI $OrgVDCURI -ContentType "application/vnd.vmware.vcloud.vdc+xml")
+	# Next retireve the Access Control information currently set for the OrgVDC; get the URI for the current AccessControl
+	[string] $AccessControlURI = ($XMLOrgVDCResponse.Vdc.Link | ?{(($_.rel -eq "down") -and ($_.type -eq "application/vnd.vmware.vcloud.controlAccess+xml"))}).href
+	[xml]$XMLOrgVDCAccessRights = (Get-vCloudAPIResponse -URI $AccessControlURI -ContentType "application/vnd.vmware.vcloud.controlAccess+xml")
+	# Return to the caller
+	$XMLOrgVDCAccessRights
+}
+
+function Update-OrgVDCAccessRightsXML(){
+	<#
+	.SYNOPSIS
+	Support function which performs a PUT against a provided Organisation Virtual Datacenter to update the Access Controls elements via the vCloud API.
+
+	.DESCRIPTION
+	Support function which performs a HTTP PUT of the provided XML against vCloud for a OrgVDC with the Provided ID to update the Access Controls elements.
+
+	.PARAMETER OrgVDCId
+	The vCloud Object Id for the Org VDC to query
+
+	.PARAMETER AccessControlData
+	Well formed XML to post against the /action/controlAccess/ of the OrgVDC
+
+	.EXAMPLE
+	Update-OrgVdcAccessRightsXML -OrgVDCId "urn:vcloud:vdc:0a91d569-7653-40ed-8258-c90f12ec05c8" -AccessControlData $xmlObject
+
+	Makes a HTTP PUT against the controlAccess link of the Org VDC Id urn:vcloud:vdc:0a91d569-7653-40ed-8258-c90f12ec05c8 with the data payload of $xmlObject.
+
+	.NOTES
+	  NAME: Update-OrgVdcAccessRightsXML
+	  AUTHOR: Adrian Begg
+	  LASTEDIT: 2017-09-14
+	  REFERENCE: http://pubs.vmware.com/vcd-820/topic/com.vmware.ICbase/PDF/vcloud_sp_api_guide_27_0.pdf p.197
+	#>
+	Param(
+		[Parameter(Mandatory=$True)]
+			[ValidateNotNullorEmpty()] [string] $OrgVDCId,
+		[Parameter(Mandatory=$True)]
+			[ValidateNotNullorEmpty()] [xml] $AccessControlData
+	)
+	# The controlAccess is not exposed in the AdminView of object (the deafult reutnred from Get-OrgVDC) need to get the User View Level
+	$objOrgVDCUserView = Get-CIView -Id $OrgVDCId -ViewLevel User
+	[string] $OrgVDCURI = $objOrgVDCUserView.Href
+	[xml]$XMLOrgVDCResponse = (Get-vCloudAPIResponse -URI $OrgVDCURI -ContentType "application/vnd.vmware.vcloud.vdc+xml")
+	# Next retireve the Access Control URI to update for the OrgVDC
+	[string] $AccessControlURI = ($XMLOrgVDCResponse.Vdc.Link | ?{(($_.rel -eq "controlAccess") -and ($_.type -eq "application/vnd.vmware.vcloud.controlAccess+xml"))}).href
+	# Make the call against the API to update the object
+	try{
+		Publish-vCloudAPICall -URI $AccessControlURI -ContentType "application/vnd.vmware.vcloud.controlAccess+xml"	-Data $AccessControlData
+	} catch {
+		throw "An error occured updating the Access Control data for the Organisation."
+	}
+}
+
+function Get-OrgVdcAccessRights(){
+	<#
+	.SYNOPSIS
+	Returns the Access Controls for a provided Organisation Virtual Datacenter object.
+
+	.DESCRIPTION
+	Returns the Access Controls for a provided Organisation Virtual Datacenter object. Upon creation, an organization VDC grants full access to all members of the containing organization however an administrator can use an access control mechanism to restrict access to specific users.
+
+	.PARAMETER OrgName
+	The Name of the vCloud Organisation.
+
+	.PARAMETER OrgVDC
+	The name of the Organization Virtual Datacenter to query
+
+	.PARAMETER OrgVDCId
+	The vCloud Object Id for the Org VDC
+
+	.EXAMPLE
+	Get-OrgVdcAccessRights -OrgName "PigeonNuggets"
+
+	Returns a collection of objects containing the Access Controls currently applied to all VDC's in the Organisation "PigeonNuggets"
+
+	.EXAMPLE
+	Get-OrgVdcAccessRights -OrgName "PigeonNuggets" -OrgVDC "Production"
+
+	Returns an object containing the Access Controls currently applied to the Org VDC "Production" in the Organisation "PigeonNuggets"
+
+ 	.EXAMPLE
+	Get-OrgVdcAccessRights -OrgVDCId "urn:vcloud:vdc:0a91d569-7653-40ed-8258-c90f12ec05c8"
+
+	Returns the AccessControl details for the Org VDC with the Id urn:vcloud:vdc:0a91d569-7653-40ed-8258-c90f12ec05c8
+
+	.NOTES
+	  NAME: Get-OrgVdcAccessRights
+	  AUTHOR: Adrian Begg
+	  LASTEDIT: 2017-09-12
+	  REFERENCE: http://pubs.vmware.com/vcd-820/topic/com.vmware.ICbase/PDF/vcloud_sp_api_guide_27_0.pdf p.197
+	#>
+	Param(
+		[Parameter(Mandatory=$True,ParameterSetName = "ByName")]
+			[ValidateNotNullorEmpty()] [string] $OrgName,
+		[Parameter(Mandatory=$False,ParameterSetName = "ByName")]
+			[ValidateNotNullorEmpty()] [string] $OrgVDC,
+		[Parameter(Mandatory=$True,ParameterSetName = "ById")]
+			[ValidateNotNullorEmpty()] [string] $OrgVDCId
+	)
+	# TODO: Add Support for External User objects (No SSO in the Lab at the moment further testing required)
+	# Check if the server is connected and version is greater then 8.10
+	if(!(Test-vCloudEnvironment -Version 8.10)){
+		Break
+	}
+	# Check if OrgVDC paramter has been provided and query to return the collection of OrgVdc Objects
+	try{
+		if(!([string]::IsNullOrEmpty($OrgVDCId))){
+			$colOrgVDC = (Get-OrgVDC -Id $OrgVDCId)
+		} elseif(!([string]::IsNullOrEmpty($OrgVDC))){
+			$colOrgVDC = (Get-OrgVdc -Name $OrgVDC -Org $OrgName)
+		} else {
+			$colOrgVDC = (Get-OrgVdc -Org $OrgName)
+		}
+	} catch {
+		throw "Unable to find an Org VDC matching the provided criteria; please check the provided values and try again."
+	}
+	# A collection of the OrgVDC Access Rights Objects
+	$colOrgVDCRights = New-Object -TypeName System.Collections.ArrayList
+	foreach($objOrgVDC in $colOrgVDC){
+		# Retreive the Access Control information set for the OrgVDC
+		[xml]$OrgVDCAccessRights = Get-OrgVdcAccessRightsXML -OrgVDCId $objOrgVDC.Id
+		# Create a PSObject with the properties
+		$objVDCAccessRight = New-Object System.Management.Automation.PSObject
+		$objVDCAccessRight | Add-Member Note* Organization $objOrgVDC.Org
+		$objVDCAccessRight | Add-Member Note* OrgVDC $objOrgVDC
+		$objVDCAccessRight | Add-Member Note* IsSharedToEveryone $OrgVDCAccessRights.ControlAccessParams.IsSharedToEveryone
+		if(!([string]::IsNullOrEmpty($OrgVDCAccessRights.ControlAccessParams.EveryoneAccessLevel))){
+			$objVDCAccessRight | Add-Member Note* EveryoneAccessLevel $OrgVDCAccessRights.ControlAccessParams.EveryoneAccessLevel
+		} else {
+			$objVDCAccessRight | Add-Member Note* EveryoneAccessLevel "NoAccess"
+		}
+		# A collection of Access Settings
+		$colVDCAccessSettings = New-Object -TypeName System.Collections.ArrayList
+		foreach($AccessSetting in $OrgVDCAccessRights.ControlAccessParams.AccessSettings.AccessSetting){
+			$objVDCAccessSetting = New-Object System.Management.Automation.PSObject
+			# Get the Local VDC User and retireve the CIUser Object for the user
+			if($AccessSetting.Subject -ne $null){
+				$CIUserObj = Get-CIUser -Id ((Get-vCloudAPIResponse -URI $AccessSetting.Subject.href -ContentType $AccessSetting.Subject.Type).User.Id)
+				$objVDCAccessSetting | Add-Member Note* CIUser $CIUserObj
+				$objVDCAccessSetting | Add-Member Note* AccessLevel $AccessSetting.AccessLevel
+				$colVDCAccessSettings.Add($objVDCAccessSetting) > $null
+			}
+		}
+		$objVDCAccessRight | Add-Member Note* AccessSettings $colVDCAccessSettings
+		$colOrgVDCRights.Add($objVDCAccessRight) > $null
+	}
+	# Return a collection of Access Rights for the targetted VDC's
+	$colOrgVDCRights
+}
+
+function Set-OrgVdcAccessRightSharedToEveryone(){
+	<#
+	.SYNOPSIS
+	Set or reset the flag for the provided Organisation Virtual Datacenter object to be visible to all users.
+
+	.DESCRIPTION
+	This cmdlet sets an Organisation Virtual Datacenter as visible or hidden for all users who have rights to the organisation. By default an Org VDC is visible to all members of the containing organization; if the -Visible:$false is provided the org VDC will be hidden from all users by default. If -Visible:$true is set it will be visible to all users by default.
+
+	.PARAMETER OrgName
+	The Name of the vCloud Organisation.
+
+	.PARAMETER OrgVDC
+	The name of the Organization Virtual Datacenter to query
+
+	.PARAMETER OrgVDCId
+	The vCloud Object Id for the Org VDC
+
+	.PARAMETER Visible
+	Default: True
+	If set to $True will reset the Org VDC to visible to all users, if $False the OrgVDC will be hidden for all users
+
+	.EXAMPLE
+	Set-OrgVdcAccessRightSharedToEveryone -OrgName "PigeonNuggets" -OrgVDC "Production" -Visible $false
+
+	Sets the Access Control applied to the Org VDC "Production" in the Organisation "PigeonNuggets" to hidden by default.
+	The Org VDC will only be visible to users that have been added using Add-OrgVdcAccessRights cmdlet.
+
+	.EXAMPLE
+	Set-OrgVdcAccessRightSharedToEveryone -OrgVDCId "urn:vcloud:vdc:0a91d569-7653-40ed-8258-c90f12ec05c8" -Visible $false
+
+	Sets the Access Control applied to the Org VDC with the vCloud Object Id "urn:vcloud:vdc:0a91d569-7653-40ed-8258-c90f12ec05c8"
+	to hidden by default. The Org VDC will only be visible to users that have been added using Add-OrgVdcAccessRights cmdlet.
+
+	.EXAMPLE
+	Set-OrgVdcAccessRightSharedToEveryone -OrgVDCId "urn:vcloud:vdc:0a91d569-7653-40ed-8258-c90f12ec05c8" -Visible $true
+
+	Resets the Access Control applied to the Org VDC with the vCloud Object Id "urn:vcloud:vdc:0a91d569-7653-40ed-8258-c90f12ec05c8"
+	to make the object visible by default.
+
+	.EXAMPLE
+	Set-OrgVdcAccessRightSharedToEveryone -OrgName "PigeonNuggets" -OrgVDC "Production" -Visible $true
+
+	Resets the default Access Control applied to the Org VDC "Production" in the Organisation "PigeonNuggets" to visible by default.
+	The Org VDC will be visible to all users.
+
+	.NOTES
+	  NAME: Set-OrgVdcAccessRightSharedToEveryone
+	  AUTHOR: Adrian Begg
+	  LASTEDIT: 2017-09-12
+	  REFERENCE: http://pubs.vmware.com/vcd-820/topic/com.vmware.ICbase/PDF/vcloud_sp_api_guide_27_0.pdf p.197
+	#>
+	Param(
+		[Parameter(Mandatory=$True,ParameterSetName = "ByName")]
+			[ValidateNotNullorEmpty()] [string] $OrgName,
+		[Parameter(Mandatory=$True,ParameterSetName = "ByName")]
+			[ValidateNotNullorEmpty()] [string] $OrgVDC,
+		[Parameter(Mandatory=$True,ParameterSetName = "ById")]
+			[ValidateNotNullorEmpty()] [string] $OrgVDCId,
+		[Parameter(Mandatory=$True,ParameterSetName = "ByName")]
+		[Parameter(Mandatory=$True,ParameterSetName = "ById")]
+			[bool] $Visible = $true
+	)
+	# Check if the server is connected and version is greater then 8.10
+	if(!(Test-vCloudEnvironment -Version 8.10)){
+		Break
+	}
+	# Check if OrgVDCId paramter has been provided or the Orgname and get the current specification
+	if(!([string]::IsNullOrEmpty($OrgVDCId))){
+		$objOrgVDCAccessControl = Get-OrgVdcAccessRights -OrgVDCId $OrgVDCId
+	} else {
+		$objOrgVDCAccessControl = Get-OrgVdcAccessRights -OrgName $OrgName -OrgVDC $OrgVDC
+	}
+	# Check the current status of the default AccessControl on the OrgVDC
+	if($Visible -and ($objOrgVDCAccessControl.IsSharedToEveryone -eq $true)){
+		Write-Warning "The OrgVDC provided is already set to be visible to all users by default. No changes have been made."
+		Break
+	} elseif(!$Visible -and ($objOrgVDCAccessControl.IsSharedToEveryone -eq $false)){
+		Write-Warning "The OrgVDC provided is already set to be hidden to all users by default. No changes have been made."
+		Break
+	} else {
+		# Load the current XML configuration for update
+		[xml]$xmlOrgVDCAccessRights = Get-OrgVdcAccessRightsXML -OrgVDCId $objOrgVDCAccessControl.OrgVDC.Id
+		# Update the IsSharedToEveryone attribute; has to be in lowercase or 400 Bad Request is thrown
+		$xmlOrgVDCAccessRights.ControlAccessParams.IsSharedToEveryone = ($Visible.ToString()).ToLower()
+		# Add/Update the EveryoneAccessLevel element if visible has been set
+		if($Visible){
+			# Check if the EveryoneAccessLevel element is present/exists
+			if([string]::IsNullOrEmpty($xmlOrgVDCAccessRights.ControlAccessParams.EveryoneAccessLevel)){
+				[Xml.XmlNode] $xmlEveryOneAccessLevel = $xmlOrgVDCAccessRights.CreateNode("element","EveryoneAccessLevel","");
+				$xmlEveryOneAccessLevel.InnerText = "ReadOnly"
+				# The Node needs to be ordered immediately after the IsSharedToEveryone Element
+				$xmlNodeSharedEveryone = $xmlOrgVDCAccessRights.ControlAccessParams.GetElementsByTagName("IsSharedToEveryone")[0]
+				$xmlOrgVDCAccessRights.ControlAccessParams.InsertAfter($xmlEveryOneAccessLevel,$xmlNodeSharedEveryone) > $nul
+				# Get rid of the unwanted namespace element added by .NET and return to the caller
+				$xmlOrgVDCAccessRights = [xml] $xmlOrgVDCAccessRights.OuterXml.Replace(" xmlns=`"`"", "")
+			} else {
+				# If it already exists update the value
+				$xmlOrgVDCAccessRights.ControlAccessParams.EveryoneAccessLevel = "ReadOnly" > $nul
+			}
+		}
+		# Make the update via an API call
+		Update-OrgVdcAccessRightsXML -OrgVDCId $objOrgVDCAccessControl.OrgVDC.Id -AccessControlData $xmlOrgVDCAccessRights
+	}
+}
+
+function Remove-OrgVdcAccessRights(){
+	<#
+	.SYNOPSIS
+	Revokes a vCloud User Rights to Read an Organisation Virtual Datacenter object which has been hidden from users by default.
+
+	.DESCRIPTION
+	This cmdlet removes a CIUser from the Access Control List for an Organisation Virtual Datacenter. If the Organisation has been hidden using the Set-OrgVdcAccessRightSharedToEveryone cmdlet the users removed using this cmdlet will no longer have rights to access/view the Organisational VDC. By default an Org VDC is visible to all members of the containing organization.
+
+	.PARAMETER OrgName
+	The Name of the vCloud Organisation.
+
+	.PARAMETER OrgVDC
+	The name of the Organization Virtual Datacenter to query
+
+	.PARAMETER OrgVDCId
+	The vCloud Object Id for the Org VDC
+
+	.PARAMETER User
+	A CIUser object to remove/revoke rights to View the VDC if hidden
+
+	.EXAMPLE
+	Remove-OrgVdcAccessRights -OrgName "PigeonNuggets" -OrgVDC "Production" -User $CIUser
+
+	Sets the Access Control applied to the Org VDC "Production" in the Organisation "PigeonNuggets" to deny user $CIUser access it if it is hidden by the Set-OrgVdcAccessRightSharedToEveryone cmdlet.
+
+	.EXAMPLE
+	Remove-OrgVdcAccessRights -OrgVDCId "urn:vcloud:vdc:0a91d569-7653-40ed-8258-c90f12ec05c8" -User $CIUser
+
+	Sets the Access Control applied to the Org VDC with the vCloud Object Id "urn:vcloud:vdc:0a91d569-7653-40ed-8258-c90f12ec05c8" to deny user $CIUser access it if it is hidden by the Set-OrgVdcAccessRightSharedToEveryone cmdlet.
+
+	.NOTES
+	  NAME: Remove-OrgVdcAccessRights
+	  AUTHOR: Adrian Begg
+	  LASTEDIT: 2017-09-14
+	  REFERENCE: http://pubs.vmware.com/vcd-820/topic/com.vmware.ICbase/PDF/vcloud_sp_api_guide_27_0.pdf p.197
+	#>
+	Param(
+		[Parameter(Mandatory=$True,ParameterSetName = "ByName")]
+			[ValidateNotNullorEmpty()] [string] $OrgName,
+		[Parameter(Mandatory=$True,ParameterSetName = "ByName")]
+			[ValidateNotNullorEmpty()] [string] $OrgVDC,
+		[Parameter(Mandatory=$True,ParameterSetName = "ById")]
+			[ValidateNotNullorEmpty()] [string] $OrgVDCId,
+		[Parameter(Mandatory=$True,ParameterSetName = "ByName",ValueFromPipeline=$True)]
+		[Parameter(Mandatory=$True,ParameterSetName = "ById",ValueFromPipeline=$True)]
+			[ValidateNotNullorEmpty()]  [PSObject] $User
+	)
+	# Check if the server is connected and version is greater then 8.10
+	if(!(Test-vCloudEnvironment -Version 8.10)){
+		Break
+	}
+	# Check if OrgVDCId paramter has been provided or the Orgname and get the current specification
+	if(!([string]::IsNullOrEmpty($OrgVDCId))){
+		$objOrgVDCAccessControl = Get-OrgVdcAccessRights -OrgVDCId $OrgVDCId
+	} else {
+		$objOrgVDCAccessControl = Get-OrgVdcAccessRights -OrgName $OrgName -OrgVDC $OrgVDC
+	}
+	# Check if the user object provided has an access right present in the OrgVDC
+	if(($objOrgVDCAccessControl.AccessSettings.CIUser | ?{$_ -eq $User}) -eq $null){
+		Write-Warning "The User $($User.Name) currently does not have explicit rights defined on the OrgVDC $($objOrgVDCAccessControl.OrgVDC.Name); no changes have been made."
+		Break
+	} else {
+		# Load the current XML configuration for update
+		[xml]$xmlOrgVDCAccessRights = Get-OrgVdcAccessRightsXML -OrgVDCId $objOrgVDCAccessControl.OrgVDC.Id
+		# Find the node and remove it from the XML
+		[Xml.XmlElement] $xmlUserToRemove = $XMLOrgVDCAccessRights.ControlAccessParams.AccessSettings.AccessSetting | ?{$_.Subject.href -eq $User.href}
+		$xmlOrgVDCAccessRights.ControlAccessParams.AccessSettings.RemoveChild($xmlUserToRemove) > $nul
+		# Check if this is the last user in the AccessSettings ACL and remove the node if required
+		if($XMLOrgVDCAccessRights.ControlAccessParams.AccessSettings.AccessSetting -eq $null){
+			$XMLOrgVDCAccessRights.ControlAccessParams.RemoveChild($XMLOrgVDCAccessRights.ControlAccessParams.GetElementsByTagName("AccessSettings")[0]) > $nul
+			# If the IsSharedEveryone is set to $false; for the last user removed the "EveryoneAccessLevel" element must be provided in the API PUT
+			if($xmlOrgVDCAccessRights.ControlAccessParams.IsSharedToEveryone -eq "false"){
+				if([string]::IsNullOrEmpty($xmlOrgVDCAccessRights.ControlAccessParams.EveryoneAccessLevel)){
+					[Xml.XmlNode] $xmlEveryOneAccessLevel = $xmlOrgVDCAccessRights.CreateNode("element","EveryoneAccessLevel","");
+					$xmlEveryOneAccessLevel.InnerText = "ReadOnly"
+					# The Node needs to be ordered immediately after the IsSharedToEveryone Element
+					$xmlNodeSharedEveryone = $xmlOrgVDCAccessRights.ControlAccessParams.GetElementsByTagName("IsSharedToEveryone")[0]
+					$xmlOrgVDCAccessRights.ControlAccessParams.InsertAfter($xmlEveryOneAccessLevel,$xmlNodeSharedEveryone) > $nul
+					# Get rid of the unwanted namespace element added by .NET and return to the caller
+					$xmlOrgVDCAccessRights = [xml] $xmlOrgVDCAccessRights.OuterXml.Replace(" xmlns=`"`"", "")
+				}
+			}
+		}
+		# Make the update to the OrgVDC via an API call
+		Update-OrgVdcAccessRightsXML -OrgVDCId $objOrgVDCAccessControl.OrgVDC.Id -AccessControlData $xmlOrgVDCAccessRights
+	}
+}
+
+function Add-OrgVdcAccessRights(){
+	<#
+	.SYNOPSIS
+	Grants a vCloud User Rights to Read an Organisation Virtual Datacenter object which has been hidden from users by default.
+
+	.DESCRIPTION
+	This cmdlet adds a CIUser to the Access Control for an Organisation Virtual Datacenter. If the Organisation has been hidden using the Set-OrgVdcAccessRightSharedToEveryone cmdlet the users added using this cmdlet can access/view the Organisational VDC. By default an Org VDC is visible to all members of the containing organization.
+
+	.PARAMETER OrgName
+	The Name of the vCloud Organisation.
+
+	.PARAMETER OrgVDC
+	The name of the Organization Virtual Datacenter to query
+
+	.PARAMETER OrgVDCId
+	The vCloud Object Id for the Org VDC
+
+	.PARAMETER User
+	A CIUser object to add to Grant rights to View the VDC if hidden
+
+	.EXAMPLE
+	Add-OrgVdcAccessRights -OrgName "PigeonNuggets" -OrgVDC "Production" -User $CIUser
+
+	Sets the Access Control applied to the Org VDC "Production" in the Organisation "PigeonNuggets" to allow user $CIUser access it if it is hidden by the Set-OrgVdcAccessRightSharedToEveryone cmdlet.
+
+	.EXAMPLE
+	Add-OrgVdcAccessRights -OrgVDCId "urn:vcloud:vdc:0a91d569-7653-40ed-8258-c90f12ec05c8" -User $CIUser
+
+	Sets the Access Control applied to the Org VDC with the vCloud Object Id "urn:vcloud:vdc:0a91d569-7653-40ed-8258-c90f12ec05c8" to allow user $CIUser access it if it is hidden by the Set-OrgVdcAccessRightSharedToEveryone cmdlet.
+
+	.NOTES
+	  NAME: Add-OrgVdcAccessRights
+	  AUTHOR: Adrian Begg
+	  LASTEDIT: 2017-09-14
+	  REFERENCE: http://pubs.vmware.com/vcd-820/topic/com.vmware.ICbase/PDF/vcloud_sp_api_guide_27_0.pdf p.197
+	#>
+	Param(
+		[Parameter(Mandatory=$True,ParameterSetName = "ByName")]
+			[ValidateNotNullorEmpty()] [string] $OrgName,
+		[Parameter(Mandatory=$True,ParameterSetName = "ByName")]
+			[ValidateNotNullorEmpty()] [string] $OrgVDC,
+		[Parameter(Mandatory=$True,ParameterSetName = "ById")]
+			[ValidateNotNullorEmpty()] [string] $OrgVDCId,
+		[Parameter(Mandatory=$True,ParameterSetName = "ByName",ValueFromPipeline=$True)]
+		[Parameter(Mandatory=$True,ParameterSetName = "ById",ValueFromPipeline=$True)]
+			[ValidateNotNullorEmpty()]  [PSObject] $User
+	)
+	# TO DO: Add support for External User Types
+	# Check if the server is connected and version is greater then 8.10
+	if(!(Test-vCloudEnvironment -Version 8.10)){
+		Break
+	}
+	# Check if OrgVDCId paramter has been provided or the Orgname and get the current specification
+	if(!([string]::IsNullOrEmpty($OrgVDCId))){
+		$objOrgVDCAccessControl = Get-OrgVdcAccessRights -OrgVDCId $OrgVDCId
+	} else {
+		$objOrgVDCAccessControl = Get-OrgVdcAccessRights -OrgName $OrgName -OrgVDC $OrgVDC
+	}
+	# Check the current status of the default AccessControl on the OrgVDC
+	if($objOrgVDCAccessControl.IsSharedToEveryone -eq $true){
+		Write-Warning "The OrgVDC provided is currently set to be visible to all users by default. The Access Rights have been changed however have no effect until the Set-OrgVdcAccessRightSharedToEveryone is run to hide the Org VDC."
+	}
+	# Check if the user currently already has rights; do nothing if they do
+	if(($objOrgVDCAccessControl.AccessSettings | ?{$_.CIUser -eq $User}) -ne $null){
+		Write-Warning "The User $User.Name currently already has been granted rights to the OrgVDC; no changes will be made."
+	} else {
+		# Load the current XML configuration for update
+		[xml]$xmlOrgVDCAccessRights = Get-OrgVdcAccessRightsXML -OrgVDCId $objOrgVDCAccessControl.OrgVDC.Id
+
+		# Next add a new AccessSetting node with the properties for the CIUser object under "AccessSettings"
+		$CIUserView = $User | Get-CIView
+		# Construct a new AccessSetting Node for the user object
+		[Xml.XmlNode] $xmlUserAccessSettingNode = $xmlOrgVDCAccessRights.CreateNode("element","AccessSetting","")
+
+		# Create the Subject of the Access Right
+		[Xml.XmlElement] $newAccessRightUser = $xmlOrgVDCAccessRights.CreateElement("Subject")
+		$newAccessRightUser.SetAttribute("href",$CIUserView.href) > $nul
+		$newAccessRightUser.SetAttribute("name",$CIUserView.Name) > $nul
+		$newAccessRightUser.SetAttribute("type",$CIUserView.Type) > $nul
+		# Add the Access Level to the Access Right
+		[Xml.XmlNode] $xmlAccessLevel = $xmlOrgVDCAccessRights.CreateNode("element","AccessLevel","");
+		$xmlAccessLevel.InnerText = "ReadOnly"
+
+		$xmlUserAccessSettingNode.AppendChild($newAccessRightUser) > $nul
+		$xmlUserAccessSettingNode.AppendChild($xmlAccessLevel) > $nul
+
+		# Now insert the AccessSetting into the AccessSettings Node; if it doesnt exist create it
+		if($xmlOrgVDCAccessRights.ControlAccessParams.AccessSettings -eq $null){
+			# Create the node "AccountSettings "and add the new user element an commit it to XML
+			[Xml.XmlNode] $xmlAccessSettingsNode = $xmlOrgVDCAccessRights.CreateNode("element","AccessSettings","")
+			$xmlAccessSettingsNode.AppendChild($xmlUserAccessSettingNode) > $nul
+			$xmlOrgVDCAccessRights.ControlAccessParams.AppendChild($xmlAccessSettingsNode) > $nul
+		} else {
+			# Add the node to the existing user list at the tail
+			$xmlOrgVDCAccessRights.ControlAccessParams.AccessSettings.AppendChild($xmlUserAccessSettingNode) > $nul
+		}
+		# Get rid of the unwanted namespace element added by .NET and return to the caller
+		$xmlOrgVDCAccessRights = [xml] $xmlOrgVDCAccessRights.OuterXml.Replace(" xmlns=`"`"", "")
+		# Make the update via an API call
+		Update-OrgVdcAccessRightsXML -OrgVDCId $objOrgVDCAccessControl.OrgVDC.Id -AccessControlData $xmlOrgVDCAccessRights
+	}
+}
 #endregion
