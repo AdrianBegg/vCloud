@@ -271,7 +271,7 @@ function Set-OrgVdcStorageProfileSIOCXML(){
 	This cmdlet generates an Org VDC Storage Profile configuration document for the provided OrgVDC Storage Profile with the SIOC settings set as required. This can then be sent as a POST to vCloud Director to modify the SIOC settings.
 
 	.PARAMETER OrgVDCStorageProfileId
-    The vCloud Object Id for the Org VDC Storge Profile/Policy you wish to target
+	The vCloud Object Id for the Org VDC Storge Profile/Policy you wish to target
 
 	.PARAMETER SIOCEnabled
 	Enables/Disables SIOC on the Org VDC Storage Profile. If being enabled for the first time DiskIOPSMax, DiskIopsDefault and DiskIOPsPerGB must be provided.
@@ -563,22 +563,22 @@ function Set-OrgVdcStorageProfile(){
 	The Name of the Storage Policy
 
 	.PARAMETER Id
-    The vCloud Object Id for the Org VDC Storge Profile/Policy you wish to target
+	The vCloud Object Id for the Org VDC Storge Profile/Policy you wish to target
 
-    .PARAMETER StorageProfileObject
-    A collection of Storage Profile Object returned by the Get-OrgVdcStorageProfile
+	.PARAMETER StorageProfileObject
+    	A collection of Storage Profile Object returned by the Get-OrgVdcStorageProfile
 
-    .PARAMETER Default
-    If set to True will mark the Storage Profile as the default for the Organisation; NOTE: This can not be set to false; this switch is used to set a storage policy as the default only
+    	.PARAMETER Default
+    	If set to True will mark the Storage Profile as the default for the Organisation; NOTE: This can not be set to false; this switch is used to set a storage policy as the default only
 
-    .PARAMETER Enabled
-    If set to True will mark the Storage Profile as the Enabled for the Organisation for use; if it is set to False this will disable the object in vCloud
+    	.PARAMETER Enabled
+    	If set to True will mark the Storage Profile as the Enabled for the Organisation for use; if it is set to False this will disable the object in vCloud
 
-    .PARAMETER Description
-    Updates the Description of the Storage Profile/Policy
+	.PARAMETER Description
+    	Updates the Description of the Storage Profile/Policy
 
-    .PARAMETER Limit
-    Updates the Storage Limit (in MB) for the Storage Profile/Policy. For Unlimmited set to 0
+	.PARAMETER Limit
+    	Updates the Storage Limit (in MB) for the Storage Profile/Policy. For Unlimmited set to 0
 
 	.PARAMETER SIOCEnabled
 	Enables/Disables SIOC on the Org VDC Storage Profile. If being enabled for the first time DiskIOPSMax, DiskIopsDefault and DiskIOPsPerGB must be provided.
@@ -592,28 +592,28 @@ function Set-OrgVdcStorageProfile(){
 	.PARAMETER DiskIopsPerGbMax
 	The maximum disk IOPs per GB value that this storage profile is permitted to deliver. A value of 0 means there is no perGB IOPS restriction.
 
-    .EXAMPLE
+    	.EXAMPLE
 	Get-OrgVdcStorageProfile -Id "urn:vcloud:vdcstorageProfile:a2925d02-a4be-4d0a-9003-cbb050ed0e7f" -Default $true
 
-    Will set the Org VDC Storage Profile with the vCloud Object Id "urn:vcloud:vdcstorageProfile:a2925d02-a4be-4d0a-9003-cbb050ed0e7f" as the default
+    	Will set the Org VDC Storage Profile with the vCloud Object Id "urn:vcloud:vdcstorageProfile:a2925d02-a4be-4d0a-9003-cbb050ed0e7f" as the default
 
 	.EXAMPLE
 	Set-OrgVdcStorageProfile -OrgName "PigeonNuggets" -Limit 2048
 
 	Will amend the Storage Quota for all Storage Profiles defined in the Organisation "PigeonNuggets" to 2048MB (if possible)
 
-    .EXAMPLE
+    	.EXAMPLE
 	Get-OrgVdcStorageProfile -OrgName "PigeonNuggets" -OrgVDC "Production" | Set-OrgVdcStorageProfile -Limit 2048
 
 	Will amend the Storage Quota for all Storage Profiles defined in the Organisation "PigeonNuggets" and Org VDC  "Production" to 2048MB (if possible)
 
-    .EXAMPLE
-    Set-OrgVdcStorageProfile -OrgName "PigeonNuggets" -OrgVDC "Production" -StorageProfileName "Tier 1" -Enabled $false
+    	.EXAMPLE
+    	Set-OrgVdcStorageProfile -OrgName "PigeonNuggets" -OrgVDC "Production" -StorageProfileName "Tier 1" -Enabled $false
 
-    Will disable the Storage Profiles defined in the Organisation "PigeonNuggets" and Org VDC "Production" named "Tier 1"
+    	Will disable the Storage Profiles defined in the Organisation "PigeonNuggets" and Org VDC "Production" named "Tier 1"
 
-    .EXAMPLE
-    Set-OrgVdcStorageProfile -OrgName "PigeonNuggets" -StorageProfileName "Tier 1" -Enabled $false -Description "This storage profile is no longer used; please use Gold instead"
+    	.EXAMPLE
+    	Set-OrgVdcStorageProfile -OrgName "PigeonNuggets" -StorageProfileName "Tier 1" -Enabled $false -Description "This storage profile is no longer used; please use Gold instead"
 	Will disable the Storage Profiles defined in the Organisation "PigeonNuggets" with the name of "Tier 1" add a description "This storage profile is no longer used; please use Gold instead"
 
 	.EXAMPLE
@@ -628,31 +628,31 @@ function Set-OrgVdcStorageProfile(){
 	  NAME: Set-OrgVdcStorageProfile
 	  AUTHOR: Adrian Begg
 	  LASTEDIT: 2017-11-08
-      REFERENCES: http://pubs.vmware.com/vcd-820/index.jsp?topic=%2Fcom.vmware.vcloud.api.sp.doc_27_0%2FGUID-D261BF1D-25D3-46EA-84CF-6ABAA45267F0.html, http://pubs.vmware.com/vcd-810/index.jsp?topic=%2Fcom.vmware.vcloud.api.reference.doc_20_0%2Fdiff%2Ftypes%2FVdcStorageProfileIopsSettingsType.html
+	  REFERENCES: http://pubs.vmware.com/vcd-820/index.jsp?topic=%2Fcom.vmware.vcloud.api.sp.doc_27_0%2FGUID-D261BF1D-25D3-46EA-84CF-6ABAA45267F0.html, http://pubs.vmware.com/vcd-810/index.jsp?topic=%2Fcom.vmware.vcloud.api.reference.doc_20_0%2Fdiff%2Ftypes%2FVdcStorageProfileIopsSettingsType.html
 	#>
 	Param(
 		[Parameter(Mandatory=$True,ParameterSetName = "ByName")]
 			[ValidateNotNullorEmpty()] [string] $OrgName,
 		[Parameter(Mandatory=$False,ParameterSetName = "ByName")]
 			[ValidateNotNullorEmpty()] [string] $OrgVDC,
-        [Parameter(Mandatory=$False,ParameterSetName = "ByName")]
+        	[Parameter(Mandatory=$False,ParameterSetName = "ByName")]
 			[ValidateNotNullorEmpty()] [string] $StorageProfileName,
 		[Parameter(Mandatory=$True,ParameterSetName = "ById")]
-            [ValidateNotNullorEmpty()] [string] $Id,
-        [Parameter(Mandatory=$True,ParameterSetName = "ByStorageObject", ValueFromPipeline=$True)]
-            [ValidateNotNullorEmpty()] [PSObject[]] $StorageProfileObject,
-        [Parameter(Mandatory=$False)]
-            [ValidateScript({
+            		[ValidateNotNullorEmpty()] [string] $Id,
+        	[Parameter(Mandatory=$True,ParameterSetName = "ByStorageObject", ValueFromPipeline=$True)]
+            		[ValidateNotNullorEmpty()] [PSObject[]] $StorageProfileObject,
+        	[Parameter(Mandatory=$False)]
+            		[ValidateScript({
 				if($_ -ne $true){
 					throw "This parameter can only be set to True. In order to unset an OrgVdcStorageProfile as the default simply set another as the default."
 				} else {
 					$true
 				}})] [bool] $Default,
-        [Parameter(Mandatory=$False)]
-          [ValidateNotNull()] [bool] $Enabled,
-        [Parameter(Mandatory=$False)]
-            [ValidateNotNullorEmpty()] [string] $Description,
-        [Parameter(Mandatory=$False)]
+        	[Parameter(Mandatory=$False)]
+          		[ValidateNotNull()] [bool] $Enabled,
+        	[Parameter(Mandatory=$False)]
+            		[ValidateNotNullorEmpty()] [string] $Description,
+        	[Parameter(Mandatory=$False)]
 			[ValidateRange(0,10000000000)] [int] $Limit,
 		[Parameter(Mandatory=$False)]
 			[ValidateNotNullOrEmpty()] [bool] $SIOCEnabled,
@@ -978,13 +978,13 @@ function Set-ProviderVdcStorageProfile(){
 	.PARAMETER Enabled
 	If set to $true the Provider VDC Storage Profile is set to Enabled; if set to $false the Provider VDC Storage Profile will be disabled
 
-    .EXAMPLE
-    Set-ProviderVdcStorageProfile -ProviderVdcStorageProfile (Get-ProviderVdcStorageProfile -ProviderVdcName "New York Datacenter 1") -Enabled $false
+	.EXAMPLE
+    	Set-ProviderVdcStorageProfile -ProviderVdcStorageProfile (Get-ProviderVdcStorageProfile -ProviderVdcName "New York Datacenter 1") -Enabled $false
 
-    Will disable all of the Storage Profiles defined in the ProviderVdc New York Datacenter1
+	Will disable all of the Storage Profiles defined in the ProviderVdc New York Datacenter1
 
-    .EXAMPLE
-    Set-ProviderVdcStorageProfile -ProviderVdcStorageProfileId "urn:vcloud:vdcstorageProfile:0a6b3ef2-00e6-43ae-889c-4922a39db21f" -Enabled $true
+    	.EXAMPLE
+    	Set-ProviderVdcStorageProfile -ProviderVdcStorageProfileId "urn:vcloud:vdcstorageProfile:0a6b3ef2-00e6-43ae-889c-4922a39db21f" -Enabled $true
 
 	Will enable the Provider VDC Storage Profile with the vCloud Object Id "urn:vcloud:vdcstorageProfile:0a6b3ef2-00e6-43ae-889c-4922a39db21f"
 
