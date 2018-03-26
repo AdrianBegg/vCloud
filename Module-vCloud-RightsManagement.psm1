@@ -1,6 +1,6 @@
 ##########################################################################################
 # Name: Module-vCloud-RightsManagement.psm1
-# Date: 16/09/2017 (v0.5)
+# Date: 26/03/2018 (v0.6)
 # Author: Adrian Begg (adrian.begg@ehloworld.com.au)
 #
 # Purpose: PowerShell modules to extend the PowerCLI for vCloud to expose
@@ -8,7 +8,7 @@
 # via the vCloud GUI/PowerCLI cmdlets
 #
 # Ref: http://pubs.vmware.com/vcd-820/topic/com.vmware.ICbase/PDF/vcloud_sp_api_guide_27_0.pdf
-##########################################################################################
+################################################################################################################
 # Change Log
 # v0.1 - 6/05/2017 - Created module and tested on vCloud Director 8.20 and NSX 6.3
 # v0.2 - 13/05/2017 - Added cmdlets for Adding and Removing single rights and amended API call behaviour
@@ -18,7 +18,11 @@
 # 	- Added cmdlets to expose hide/show OrgVDC for specific Org Users
 #	- Cleaned up some error checking
 #	- Updated cmdlet documentation
-##########################################################################################
+# v0.51 - 08/11/2017:
+# 	- Moved the API Support Modules
+# v0.6 - 26/03/2018:
+# 	- Major Update for use with vCloud Director 9.1 (API Version 30); fixed Org Rights matching behaviour to match on URN not URL/RightsReference
+##################################################################################################################
 
 #region: API_Support_Functions
 function Test-vCloudEnvironment(){
@@ -88,7 +92,7 @@ function Get-vCloudAPIResponse(){
 	.NOTES
 	  NAME: Get-vCloudAPIResponse
 	  AUTHOR: Adrian Begg
-	  LASTEDIT: 2017-09-16
+	  LASTEDIT: 2018-03-26
 	  KEYWORDS: vmware get vcloud director
 	  #Requires -Version 2.0
 	#>
@@ -102,7 +106,7 @@ function Get-vCloudAPIResponse(){
 	# Setup Web Request for the API call to retireve the data from vCloud
 	$webclient = New-Object system.net.webclient
 	$webclient.Headers.Add("x-vcloud-authorization",$global:DefaultCIServers.SessionSecret)
-	$webclient.Headers.Add("Accept","application/*+xml;version=27.0")
+	$webclient.Headers.Add("Accept","application/*+xml;version=30.0")
 	$webclient.Headers.Add("Content-Type", $ContentType)
 	$webclient.Headers.Add("Accept-Language: en")
 	try{
@@ -114,6 +118,61 @@ function Get-vCloudAPIResponse(){
 }
 
 function Publish-vCloudAPICall(){
+	<#
+	.SYNOPSIS
+	Wrapper function which performs a PUT of XML to the vCloud Director API
+
+	.DESCRIPTION
+	Wrapper function which performs a PUT of XML to the vCloud Director API
+
+	.PARAMETER URI
+	The URI of the vCloud API object to perform the PUT request against
+
+	.PARAMETER ContentType
+	The Content-Type to pass to vCloud in the headers
+
+	.PARAMETER Data
+	The payload to PUT to the API
+
+	.EXAMPLE
+	Publish-vCloudAPICall -URI "https://vcd.pigeonnuggets.com/api/vApp/vm-f13ad1ca-3151-455c-aa84-935a2669da96/virtualHardwareSection/disks" -ContentType "application/vnd.vmware.vcloud.rasditemslist+xml" -Data $XMLOrgVDCSPConfig
+	Peforms a HTTP PUT against vCloud Director URI https://vcd.pigeonnuggets.com/api/vApp/vm-f13ad1ca-3151-455c-aa84-935a2669da96/virtualHardwareSection/disks with the payload provided in the input variable $XMLOrgVDCSPConfig
+
+	.NOTES
+	  NAME: Publish-vCloudAPICall
+	  AUTHOR: Adrian Begg
+	  LASTEDIT: 2018-03-26
+	  KEYWORDS: vmware publish vcloud director
+	  #Requires -Version 2.0
+	#>
+	Param(
+		[Parameter(Mandatory=$True)] [string] $URI,
+		[Parameter(Mandatory=$True)] [string] $ContentType,
+		[Parameter(Mandatory=$True)] [xml] $Data
+	)
+	# Check if the server is connected
+	if(!(Test-vCloudEnvironment)){
+		Break
+	}
+	# Setup Web Request
+	$webclient = New-Object system.net.webclient
+	$webclient.Headers.Add("x-vcloud-authorization",$global:DefaultCIServers.SessionSecret)
+	$webclient.Headers.Add("Accept","application/*+xml;version=30.0")
+	$webclient.Headers.Add("Content-Type", $ContentType)
+	$webclient.Headers.Add("Accept-Language: en")
+
+	# Convert the new configuration to byte array for upload
+	[string] $strUploadData = $Data.OuterXml
+	[byte[]]$byteArray = [System.Text.Encoding]::ASCII.GetBytes($strUploadData)
+	# "To the cloud !"
+	try{
+		$UploadData = $webclient.UploadData($URI, "PUT", $bytearray)
+	} catch {
+		throw "An error occured attempting to make HTTP PUT against $URI"
+	}
+}
+
+function Update-vCloudAPICall(){
 	<#
 	.SYNOPSIS
 	Wrapper function which performs a POST of XML to the vCloud Director API
@@ -131,11 +190,13 @@ function Publish-vCloudAPICall(){
 	The payload to POST to the API
 
 	.EXAMPLE
+	Publish-vCloudAPICall -URI "https://vcd.pigeonnuggets.com/api/vApp/vm-f13ad1ca-3151-455c-aa84-935a2669da96/virtualHardwareSection/disks" -ContentType "application/vnd.vmware.vcloud.rasditemslist+xml" -Data $XMLOrgVDCSPConfig
+	Peforms a HTTP POST against vCloud Director URI https://vcd.pigeonnuggets.com/api/vApp/vm-f13ad1ca-3151-455c-aa84-935a2669da96/virtualHardwareSection/disks with the payload provided in the input variable $XMLOrgVDCSPConfig
 
 	.NOTES
 	  NAME: Publish-vCloudAPICall
 	  AUTHOR: Adrian Begg
-	  LASTEDIT: 2017-09-16
+	  LASTEDIT: 2018-03-26
 	  KEYWORDS: vmware publish vcloud director
 	  #Requires -Version 2.0
 	#>
@@ -151,35 +212,7 @@ function Publish-vCloudAPICall(){
 	# Setup Web Request
 	$webclient = New-Object system.net.webclient
 	$webclient.Headers.Add("x-vcloud-authorization",$global:DefaultCIServers.SessionSecret)
-	$webclient.Headers.Add("Accept","application/*+xml;version=27.0")
-	$webclient.Headers.Add("Content-Type", $ContentType)
-	$webclient.Headers.Add("Accept-Language: en")
-
-	# Convert the new configuration to byte array for upload
-	[string] $strUploadData = $Data.OuterXml
-	[byte[]]$byteArray = [System.Text.Encoding]::ASCII.GetBytes($strUploadData)
-	# "To the cloud !"
-	try{
-		$UploadData = $webclient.UploadData($URI, "PUT", $bytearray)
-	} catch {
-		throw "An error occured attempting to make HTTP POST against $URI"
-	}
-}
-
-function Update-vCloudAPICall(){
-	Param(
-		[Parameter(Mandatory=$True)] [string] $URI,
-		[Parameter(Mandatory=$True)] [string] $ContentType,
-		[Parameter(Mandatory=$True)] [xml] $Data
-	)
-	# Check if the server is connected
-	if(!(Test-vCloudEnvironment)){
-		Break
-	}
-	# Setup Web Request
-	$webclient = New-Object system.net.webclient
-	$webclient.Headers.Add("x-vcloud-authorization",$global:DefaultCIServers.SessionSecret)
-	$webclient.Headers.Add("Accept","application/*+xml;version=27.0")
+	$webclient.Headers.Add("Accept","application/*+xml;version=30.0")
 	$webclient.Headers.Add("Content-Type", $ContentType)
 	$webclient.Headers.Add("Accept-Language: en")
 
@@ -215,7 +248,7 @@ function Get-CIOrgRightsXML(){
 	.NOTES
 	  NAME: Get-CIOrgRightsXML
 	  AUTHOR: Adrian Begg
-	  LASTEDIT: 2017-09-16
+	  LASTEDIT: 2018-03-26
 	  KEYWORDS: vmware get vcloud director
 	  #Requires -Version 2.0
 	#>
@@ -235,7 +268,7 @@ function Get-CIOrgRightsXML(){
 	}
 	# Make the API call to get the Rights assigned
 	[string] $URI = ($Org.Href + "/rights")
-	[xml]$xmlOrgRights = Get-vCloudAPIResponse -URI $URI -ContentType "application/vnd.vmware.admin.org.rights+xml;version=27.0"
+	[xml]$xmlOrgRights = Get-vCloudAPIResponse -URI $URI -ContentType "application/vnd.vmware.admin.org.rights+xml;version=30.0"
 
 	# Return a the XML
 	$xmlOrgRights
@@ -253,30 +286,35 @@ function Add-CIOrgRightXML(){
 	.PARAMETER RightsXML
 	The Rights for an Organisation in XML format
 
-	.PARAMETER RightReference
-	The vCloud URI Reference for the new right
-
-	.PARAMETER Name
-	The name of the Right
+	.PARAMETER RightId
+	The URN for the vCloud Right to be added
 
 	.EXAMPLE
-	Add-CIOrgRightXML -RightsXML $xmlReference -RightReference "https://192.168.88.25/api/admin/right/f66d8e79-b584-3d79-a501-d71aaa2ebbf9" -Name "Organization vDC: View"
+	Add-CIOrgRightXML -RightsXML $xmlReference -RightId "urn:vcloud:right:c53990c7-3932-3926-8247-45639243d734"
 
 	.NOTES
 	  NAME: Add-vCloudOrgRightXML
 	  AUTHOR: Adrian Begg
-	  LASTEDIT: 2017-05-13
+	  LASTEDIT: 2018-03-26
 	  KEYWORDS: vmware get vcloud director
 	  #Requires -Version 2.0
 	#>
 	Param(
 		[Parameter(Mandatory=$True)] [xml] $RightsXML,
-		[Parameter(Mandatory=$True)] [string] $RightReference,
-		[Parameter(Mandatory=$True)] [string] $Name
+		[Parameter(Mandatory=$True)] [string] $RightId
 	)
+	# Create the RightReference URI for the provided Right
+	try{
+		$objRight = Get-CIView -Id $RightId
+		$strRightId = $objRight.Id.Substring($objRight.Id.LastIndexOf(":")+1)
+		$strNewRightReference = $RightsXML.OrgRights.href + "/" + $strRightId
+	} catch {
+		throw "Unable to resolve the right with the URN $RightId"
+		Break
+	}
 	# First check if the right already exists
-	if ($RightReference -in $RightsXML.OrgRights.RightReference.Href){
-		Write-Warning "The right $($Name) is already assigned for this orgnaisation; no changes will be made."
+	if ($strNewRightReference -in $RightsXML.OrgRights.RightReference.Href){
+		Write-Warning "The right with the URN $($RightId) is already assigned for this orgnaisation; no changes will be made."
 		$RightsXML
 	} else {
 
@@ -285,9 +323,9 @@ function Add-CIOrgRightXML(){
 		$xmlRightsDoc.LoadXml($RightsXML.OuterXml)
 
 		$newRoleRight = $xmlRightsDoc.CreateElement("RightReference")
-		$newRoleRight.SetAttribute("href",$RightReference)
-		$newRoleRight.SetAttribute("name",$Name)
-		$newRoleRight.SetAttribute("type","application/vnd.vmware.admin.right+xml")
+		$newRoleRight.SetAttribute("href",$strNewRightReference)
+		$newRoleRight.SetAttribute("name",$objRight.Name)
+		$newRoleRight.SetAttribute("type",$objRight.Type)
 		$xmlRightsDoc.OrgRights.AppendChild($newRoleRight) > $nul
 
 		# Get rid of the unwanted namespace element added by .NET and return to the caller
@@ -304,12 +342,12 @@ function Get-CIRights(){
 	Returns a collection of the avaialble rights in the Global cloud infrastructure.
 
 	.DESCRIPTION
-	Returns XML of the Global rights for the connected Cloud Infrastructure
+	Returns a collection of the Global rights for the connected Cloud Infrastructure
 
 	.NOTES
 	  NAME: Get-CIOrgRights
 	  AUTHOR: Adrian Begg
-	  LASTEDIT: 2017-09-16
+	  LASTEDIT: 2018-03-26
 	  KEYWORDS: vmware get vcloud director
 	  #Requires -Version 2.0
 	#>
@@ -318,7 +356,21 @@ function Get-CIRights(){
 		Break
 	}
 	[string] $vCloudURI = $global:DefaultCIServers.ServiceUri.AbsoluteURI + "admin"
-	(Get-vCloudAPIResponse -URI $vCloudURI -ContentType "application/vnd.vmware.admin.vcloud+xml;version=27.0").VCloud.RightReferences.RightReference
+	$cloudRights = (Get-vCloudAPIResponse -URI $vCloudURI -ContentType "application/vnd.vmware.admin.vcloud+xml;version=30.0").VCloud.RightReferences.RightReference
+
+	$colSystemRights = New-Object -TypeName System.Collections.ArrayList
+	foreach($SystemRight in $cloudRights){
+		$apiSystemRight = Get-vCloudAPIResponse $SystemRight.href -ContentType $SystemRight.type
+		$objSystemRight = New-Object System.Management.Automation.PSObject
+		$objSystemRight | Add-Member Note* Id $apiSystemRight.Right.id
+		$objSystemRight | Add-Member Note* Name $apiSystemRight.Right.name
+		$objSystemRight | Add-Member Note* Description $apiSystemRight.Right.Description
+		$objSystemRight | Add-Member Note* href $apiSystemRight.Right.href
+		$objSystemRight | Add-Member Note* Category $apiSystemRight.Right.Category
+		$objSystemRight | Add-Member Note* Type $apiSystemRight.Right.type
+		$colSystemRights.Add($objSystemRight) > $null
+	}
+	$colSystemRights
 }
 
 function Get-CIOrgRights(){
@@ -341,7 +393,7 @@ function Get-CIOrgRights(){
 	.NOTES
 	  NAME: Get-CIOrgRights
 	  AUTHOR: Adrian Begg
-	  LASTEDIT: 2017-09-16
+	  LASTEDIT: 2018-03-26
 	  KEYWORDS: vmware get vcloud director
 	  #Requires -Version 2.0
 	#>
@@ -355,6 +407,19 @@ function Get-CIOrgRights(){
 	# Make the API call to get the Rights assigned
 	try{
 		[xml]$xmlOrgRights = Get-CIOrgRightsXML $OrgName
+		# Next create a collection with the URNs (Id's) for each of the rights for reliable comparison
+		$colOrgRights = New-Object -TypeName System.Collections.ArrayList
+		foreach($xmlOrgRight in $xmlOrgRights.OrgRights.RightReference){
+			$apiOrgRight = Get-vCloudAPIResponse $xmlOrgRight.href -ContentType $xmlOrgRights.OrgRights.type
+			$objOrgRight = New-Object System.Management.Automation.PSObject
+			$objOrgRight | Add-Member Note* Id $apiOrgRight.Right.id
+			$objOrgRight | Add-Member Note* Name $apiOrgRight.Right.name
+			$objOrgRight | Add-Member Note* Description $apiOrgRight.Right.Description
+			$objOrgRight | Add-Member Note* href $apiOrgRight.Right.href
+			$objOrgRight | Add-Member Note* Category $apiOrgRight.Right.Category
+			$objOrgRight | Add-Member Note* Type $apiOrgRight.Right.type
+			$colOrgRights.Add($objOrgRight) > $null
+		}
 	} catch {
 		throw "Unable to get the Organisation Rights for $OrgName"
 		Break
@@ -362,13 +427,15 @@ function Get-CIOrgRights(){
 	# Next we need to make a call to the API to resolve the Rights that are avaialble for the Cloud
 	$cloudRights = Get-CIRights
 
-	# Now build a collection of the rights available vs the rights enabled for the
+	# Now build a collection of the rights available vs the rights enabled for the Organisation
 	$colRights = New-Object -TypeName System.Collections.ArrayList
 	foreach($objRight in $cloudRights){
 		$objRightAssignment = New-Object System.Management.Automation.PSObject
-		$objRightAssignment | Add-Member Note* RightReference $objRight.href
+		$objRightAssignment | Add-Member Note* Id $objRight.id
 		$objRightAssignment | Add-Member Note* Name $objRight.name
-		$objRightAssignment | Add-Member Note* Enabled ($objRight.href -in $xmlOrgRights.OrgRights.RightReference.Href)
+		$objRightAssignment | Add-Member Note* Description $objRight.Description
+		$objRightAssignment | Add-Member Note* Category $objRight.Category
+		$objRightAssignment | Add-Member Note* Enabled ($objRight.id -in $colOrgRights.id)
 		$colRights.Add($objRightAssignment) > $null
 	}
 	# Return a collection of rights
@@ -397,7 +464,7 @@ function Export-CIOrgRights(){
 	.NOTES
 	  NAME: Export-CIOrgRights
 	  AUTHOR: Adrian Begg
-	  LASTEDIT: 2017-09-16
+	  LASTEDIT: 2018-03-26
 	  #Requires -Version 2.0
 	#>
 	Param(
@@ -415,7 +482,7 @@ function Export-CIOrgRights(){
 		throw "Unable to find an Organisation $OrgName"
 		Break
 	}
-	$colRights = Get-CIOrgRights -OrgName $OrgName | Select name,enabled | Export-CSV $OutputFilePath -NoTypeInformation
+	Get-CIOrgRights -OrgName $OrgName | Export-CSV $OutputFilePath -NoTypeInformation
 }
 
 function Import-CIOrgRights(){
@@ -440,7 +507,7 @@ function Import-CIOrgRights(){
 	.NOTES
 	  NAME: Import-CIOrgRights
 	  AUTHOR: Adrian Begg
-	  LASTEDIT: 2017-09-16
+	  LASTEDIT: 2018-03-26
 	  #Requires -Version 2.0
 	#>
 	Param(
@@ -464,9 +531,9 @@ function Import-CIOrgRights(){
 	}
 	# Import the rules from the CSV and get a list of valid rights for the Org
 	$colRightsCSV = Import-CSV -Path $InputCSVFile
-	[xml] $xmlOrgRights = Get-CIOrgRightsXML $OrgName
-	$colOrgRights = Get-CIOrgRights $OrgName
 	$colEnabledRights = $colRightsCSV | ?{$_.enabled.ToLower() -eq "true"}
+	# Get the existing Org Rights XML
+	[xml] $xmlOrgRights = Get-CIOrgRightsXML $OrgName
 
 	# First clean the existing configuration of all OrgRights
 	[xml]$xmlRightsDoc = New-Object system.Xml.XmlDocument
@@ -476,17 +543,18 @@ function Import-CIOrgRights(){
 	}
 	# Get the rights for the current vCloud instance
 	$cloudRights = Get-CIRights
-	$newOrgRights = $cloudRights | ?{$_.name -in $colEnabledRights.name}
+	$newOrgRights = $cloudRights | ?{$_.id -in $colEnabledRights.id}
+
 	# Add the rights from the CSV into the configuration file stripped of the existing rights
 	foreach($appliedRight in $newOrgRights){
-		$xmlRightsDoc = Add-CIOrgRightXML -RightsXML $xmlRightsDoc -RightReference $appliedRight.href -Name $appliedRight.Name
+		$xmlRightsDoc = Add-CIOrgRightXML -RightsXML $xmlRightsDoc -RightId $appliedRight.id
 	}
 	# Retireve the Org object for the Organisation
 	try{
 		$Org = Get-Org -Name $OrgName | Get-CIView
 		# Make the API call to POST the Rights assigned
 		[string] $URI = ($Org.Href + "/rights")
-		Publish-vCloudAPICall -URI $URI -ContentType "application/vnd.vmware.admin.org.rights+xml;version=27.0"	-Data $xmlRightsDoc
+		Publish-vCloudAPICall -URI $URI -ContentType "application/vnd.vmware.admin.org.rights+xml;version=30.0" -Data $xmlRightsDoc
 	} catch {
 		throw "An error occured applying the imported rights to the Org $OrgName."
 	}
@@ -514,7 +582,7 @@ function Remove-CIOrgRight(){
 	.NOTES
 	  NAME: Remove-CIOrgRight
 	  AUTHOR: Adrian Begg
-	  LASTEDIT: 2017-05-24
+	  LASTEDIT: 2018-03-26
 	  #Requires -Version 2.0
 	#>
 	Param(
@@ -545,7 +613,7 @@ function Remove-CIOrgRight(){
 			# Retireve the Org object for the Organisation
 			$Org = Get-Org -Name $OrgName | Get-CIView
 			[string] $URI = ($Org.Href + "/rights")
-			Publish-vCloudAPICall -URI $URI -ContentType "application/vnd.vmware.admin.org.rights+xml;version=27.0"	-Data $xmlRightsDoc
+			Publish-vCloudAPICall -URI $URI -ContentType "application/vnd.vmware.admin.org.rights+xml;version=30.0"	-Data $xmlRightsDoc
 		} catch {
 			throw "An error occured removing the right $Right from Org $OrgName."
 		}
@@ -596,7 +664,7 @@ function Add-CIOrgRight(){
 		$cloudRights = Get-CIRights
 		$newOrgRight = $cloudRights | ?{$_.name -in $Right}
 		if($newOrgRight -ne $null){
-			$xmlNewRightsDoc = Add-CIOrgRightXML -RightsXML $xmlOrgRights -RightReference $newOrgRight.href -Name $Right
+			$xmlNewRightsDoc = Add-CIOrgRightXML -RightsXML $xmlOrgRights -RightId $newOrgRight.id
 		} else {
 			throw "Unable to find a right with the name $Right to add to the Organisation. Please verify the right name and try again."
 		}
@@ -605,7 +673,7 @@ function Add-CIOrgRight(){
 		try{
 			$Org = Get-Org -Name $OrgName | Get-CIView
 			[string] $URI = ($Org.Href + "/rights")
-			Publish-vCloudAPICall -URI $URI -ContentType "application/vnd.vmware.admin.org.rights+xml;version=27.0"	-Data $xmlNewRightsDoc
+			Publish-vCloudAPICall -URI $URI -ContentType "application/vnd.vmware.admin.org.rights+xml;version=30.0" -Data $xmlNewRightsDoc
 		} catch {
 			throw "An error occured adding the new right $Right to the Org $OrgName."
 		}
